@@ -165,6 +165,52 @@ pyston/build/systemdbg_env/bin/python: | $(VIRTUALENV)
 pyston/build/pypy_env/bin/python: | $(VIRTUALENV)
 	$(VIRTUALENV) -p pypy3 pyston/build/pypy_env
 
+# Usage:
+# $(call make_cpython_build,NAME,CONFIGURE_LINE)
+define make_cpython_build
+$(eval
+
+pyston/build/cpython_$(1)_build/Makefile: $(MAKEFILE_DEPENDENCIES)
+	mkdir -p pyston/build/cpython_$(1)_build
+	cd pyston/build/cpython_$(1)_build; $(2)
+
+pyston/build/cpython_$(1)_build/pyston: pyston/build/cpython_$(1)_build/Makefile $(wildcard */*.c) $(wildcard */*.h) $(if $(findstring stock,$(1)),,pyston/aot/aot_all.bc)
+	cd pyston/build/cpython_$(1)_build; $$(MAKE)
+	touch $$@ # some cpython .c files don't affect the python executable
+
+pyston/build/cpython_$(1)_install/usr/bin/python3: pyston/build/cpython_$(1)_build/pyston
+	cd pyston/build/cpython_$(1)_build; $$(MAKE) install DESTDIR=$(abspath pyston/build/cpython_$(1)_install)
+$(1): pyston/build/$(1)_env/bin/python
+
+pyston/build/$(1)_env/bin/python: pyston/build/cpython_$(1)_install/usr/bin/python3 | $(VIRTUALENV)
+	$(VIRTUALENV) -p $$< pyston/build/$(1)_env
+
+pyston/build/$(1)_env/update.stamp: pyston/benchmark_requirements.txt pyston/benchmark_requirements_nonpypy.txt | pyston/build/$(1)_env/bin/python
+	pyston/build/$(1)_env/bin/pip install -r pyston/benchmark_requirements.txt -r pyston/benchmark_requirements_nonpypy.txt
+	touch $$@
+
+%_$(1): %.py pyston/build/$(1)_env/update.stamp
+	time pyston/build/$(1)_env/bin/python3 $$< $$(ARGS)
+
+perf_%_$(1): %.py pyston/build/$(1)_env/update.stamp
+	JIT_PERF_MAP=1 perf record -g ./pyston/build/$(1)_env/bin/python3 $$< $$(ARGS)
+	$$(MAKE) perf_report
+
+pyperf_%_$(1): %.py ./pyston/build/$(1)_env/bin/update.stamp pyston/build/system_env/bin/python
+	$$(PYPERF) pyston/build/$(1)_env/bin/python3 $$< $$(ARGS)
+)
+
+# UNSAFE build target
+# If you're making changes to cpython but don't want to rebuild the traces or anything beyond the python binary,
+# you can call this target for a much faster build.
+# Skips cpython_bc_build, aot_gen, and cpython_$(1)_install
+# If you want to run the skipped steps, you will have to touch a file before doing a (safe) rebuild
+unsafe_$(1):
+	$(MAKE) -C pyston/build/cpython_$(1)_build
+	/bin/cp pyston/build/cpython_$(1)_build/pyston pyston/build/cpython_$(1)_install/usr/bin/python3.8
+
+endef
+
 define make_bolt_rule
 $(eval
 $(2).fdata: $(1) $(BOLT) | $(VIRTUALENV)
