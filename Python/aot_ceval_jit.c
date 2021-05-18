@@ -257,7 +257,6 @@ static void* __attribute__ ((const)) get_addr_of_helper_func(int opcode, int opa
         JIT_HELPER_ADDR(WITH_CLEANUP_START);
         JIT_HELPER_ADDR(WITH_CLEANUP_FINISH);
         JIT_HELPER_ADDR(CALL_FUNCTION_KW);
-        JIT_HELPER_ADDR(MAKE_FUNCTION);
         JIT_HELPER_ADDR(FORMAT_VALUE);
 
         case UNPACK_SEQUENCE:
@@ -2503,6 +2502,38 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_push_reg_and_apply(Dst, arg1_idx);
             break;
 
+        case MAKE_FUNCTION:
+        {
+            RefStatus ref_status[2];
+            deferred_vs_pop2(Dst, arg3_idx, arg1_idx, ref_status);
+            deferred_vs_convert_reg_to_stack(Dst);
+            | mov arg2, [f + offsetof(PyFrameObject, f_globals)]
+            emit_call_decref_args2(Dst, PyFunction_NewWithQualName, arg3_idx, arg1_idx, ref_status);
+            emit_if_res_0_error(Dst);
+
+            int num_to_remove = 0;
+            if (oparg & 0x08) {
+                deferred_vs_peek_owned(Dst, arg1_idx, ++num_to_remove);
+                | mov [res + offsetof(PyFunctionObject, func_closure)], arg1
+            }
+            if (oparg & 0x04) {
+                deferred_vs_peek_owned(Dst, arg1_idx, ++num_to_remove);
+                | mov [res + offsetof(PyFunctionObject, func_annotations)], arg1
+            }
+            if (oparg & 0x02) {
+                deferred_vs_peek_owned(Dst, arg1_idx, ++num_to_remove);
+                | mov [res + offsetof(PyFunctionObject, func_kwdefaults)], arg1
+            }
+            if (oparg & 0x01) {
+                deferred_vs_peek_owned(Dst, arg1_idx, ++num_to_remove);
+                | mov [res + offsetof(PyFunctionObject, func_defaults)], arg1
+            }
+            deferred_vs_remove(Dst, num_to_remove);
+
+            deferred_vs_push(Dst, REGISTER, res_idx);
+            break;
+        }
+
         default:
             // compiler complains if the first line after a label is a declaration and not a statement:
             (void)0;
@@ -2548,7 +2579,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 // ### TWO PYTHON ARGS ###
                 // JIT_HELPER2
                 case WITH_CLEANUP_FINISH:
-                case MAKE_FUNCTION:
                 // JIT_HELPER_WITH_NAME_OPCACHE_AOT2
                 case STORE_ATTR:
                     deferred_vs_pop2_owned(Dst, arg2_idx, arg3_idx);
@@ -2633,7 +2663,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 case SETUP_WITH:
                 case CALL_FUNCTION_KW:
                 case CALL_FUNCTION_EX:
-                case MAKE_FUNCTION:
                 case FORMAT_VALUE:
                     emit_mov_imm(Dst, arg1_idx, oparg);
                     break;
@@ -2732,7 +2761,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 case LOAD_METHOD:
                 case CALL_FUNCTION_KW:
                 case CALL_FUNCTION_EX:
-                case MAKE_FUNCTION:
                 case FORMAT_VALUE:
                     // res == 0 means error
                     // all other values are the returned python object

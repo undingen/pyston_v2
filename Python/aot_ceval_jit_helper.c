@@ -1689,40 +1689,6 @@ __attribute__((flatten)) JIT_HELPER_WITH_OPARG3(CALL_FUNCTION_EX_KWARGS, kwargs,
     return JIT_HELPER_CALL_FUNCTION_EX_internal(1 /* oparg with kwargs */, kwargs, callargs, func);
 }
 
-JIT_HELPER_WITH_OPARG2(MAKE_FUNCTION, qualname, codeobj) {
-    //PyObject *qualname = POP();
-    //PyObject *codeobj = POP();
-    PyFunctionObject *func = (PyFunctionObject *)
-        PyFunction_NewWithQualName(codeobj, f->f_globals, qualname);
-
-    Py_DECREF(codeobj);
-    Py_DECREF(qualname);
-    if (func == NULL) {
-        goto_error;
-    }
-
-    if (oparg & 0x08) {
-        assert(PyTuple_CheckExact(TOP()));
-        func ->func_closure = POP();
-    }
-    if (oparg & 0x04) {
-        assert(PyDict_CheckExact(TOP()));
-        func->func_annotations = POP();
-    }
-    if (oparg & 0x02) {
-        assert(PyDict_CheckExact(TOP()));
-        func->func_kwdefaults = POP();
-    }
-    if (oparg & 0x01) {
-        assert(PyTuple_CheckExact(TOP()));
-        func->func_defaults = POP();
-    }
-
-    //PUSH((PyObject *)func);
-    //DISPATCH();
-    return (PyObject*)func;
-}
-
 JIT_HELPER_WITH_OPARG(FORMAT_VALUE) {
     /* Handles f-string value formatting. */
     PyObject *result;
