@@ -205,6 +205,19 @@ static int is_immortal(PyObject* obj) {
     return obj->ob_refcnt > (1L<<59);
 }
 
+static PyObject* PyTuple_New_Nonzeroed1() {
+    return PyTuple_New_Nonzeroed(1);
+}
+static PyObject* PyTuple_New_Nonzeroed2() {
+    return PyTuple_New_Nonzeroed(2);
+}
+static PyObject* PyTuple_New_Nonzeroed3() {
+    return PyTuple_New_Nonzeroed(3);
+}
+static PyObject* PyTuple_New_Nonzeroed4() {
+    return PyTuple_New_Nonzeroed(4);
+}
+
 static void* __attribute__ ((const)) get_addr_of_helper_func(int opcode, int oparg) {
     switch (opcode) {
 #define JIT_HELPER_ADDR(name)   case name: return JIT_HELPER_##name
@@ -2364,8 +2377,18 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
         case BUILD_LIST:
             deferred_vs_convert_reg_to_stack(Dst);
-            emit_mov_imm(Dst, arg1_idx, oparg);
-            emit_call_ext_func(Dst, opcode == BUILD_LIST ? PyList_New : PyTuple_New_Nonzeroed);
+            if (opcode == BUILD_LIST || oparg > 4) {
+                emit_mov_imm(Dst, arg1_idx, oparg);
+                emit_call_ext_func(Dst, opcode == BUILD_LIST ? PyList_New : PyTuple_New_Nonzeroed);
+            } else if (oparg == 1) {
+                emit_call_ext_func(Dst, PyTuple_New_Nonzeroed1);
+            } else if (oparg == 2) {
+                emit_call_ext_func(Dst, PyTuple_New_Nonzeroed2);
+            } else if (oparg == 3) {
+                emit_call_ext_func(Dst, PyTuple_New_Nonzeroed3);
+            } else if (oparg == 4) {
+                emit_call_ext_func(Dst, PyTuple_New_Nonzeroed4);
+            }
             emit_if_res_0_error(Dst);
             if (oparg) {
                 // PyTupleObject stores the elements directly inside the object
@@ -2388,11 +2411,14 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             break;
 
         case LOAD_CLOSURE:
+            deferred_vs_push(Dst, FAST, Dst->co->co_nlocals + oparg);
+/*
             deferred_vs_convert_reg_to_stack(Dst);
             // PyObject *cell = freevars[oparg];
             emit_load_freevar(Dst, res_idx, oparg);
             emit_incref(Dst, res_idx);
             deferred_vs_push(Dst, REGISTER, res_idx);
+*/
             break;
 
         case STORE_DEREF:
