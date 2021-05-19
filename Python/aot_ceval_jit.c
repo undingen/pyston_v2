@@ -201,6 +201,10 @@ void format_exc_unbound(PyThreadState *tstate, PyCodeObject *co, int oparg);
 
 Py_ssize_t lookdict_split(PyDictObject *mp, PyObject *key, Py_hash_t hash, PyObject **value_addr);
 
+PyObject * _Py_HOT_FUNCTION
+call_function_ceval_kw(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg, PyObject *kwnames);
+
+
 static int is_immortal(PyObject* obj) {
     return obj->ob_refcnt > (1L<<59);
 }
@@ -307,6 +311,7 @@ static void* __attribute__ ((const)) get_addr_of_aot_func(int opcode, int oparg,
     OPCODE_PROFILE(CALL_FUNCTION, call_function_ceval_no_kw);
     OPCODE_PROFILE(CALL_METHOD, call_method_ceval_no_kw);
     OPCODE_PROFILE(CALL_FUNCTION_KW, call_function_ceval_kw);
+    OPCODE_STATIC(CALL_METHOD_KW, call_function_ceval_kw);
 
     OPCODE_PROFILE(STORE_SUBSCR, PyObject_SetItem);
     OPCODE_PROFILE(BINARY_SUBSCR, PyObject_GetItem);
@@ -2189,7 +2194,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case CALL_FUNCTION:
         case CALL_FUNCTION_KW:
         case CALL_METHOD:
-            if (opcode == CALL_FUNCTION_KW) {
+        case CALL_METHOD_KW:
+            if (opcode == CALL_FUNCTION_KW || opcode == CALL_METHOD_KW) {
                 deferred_vs_pop1_owned(Dst, arg4_idx);
             }
             deferred_vs_apply(Dst);
@@ -2202,7 +2208,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
             int num_vs_args = oparg + 1;
 
-            if (opcode == CALL_METHOD) {
+            if (opcode == CALL_METHOD || opcode == CALL_METHOD_KW) {
                 num_vs_args += 1;
 
                 // this is taken from clang:
