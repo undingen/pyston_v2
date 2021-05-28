@@ -97,7 +97,7 @@ StringMap<intptr_t> SymbolFinder::getOffsetsFromFile(llvm::StringRef filename) {
         RELEASE_ASSERT(type.size() == 1, "");
 
         intptr_t offset_int = strtoll(offset.c_str(), nullptr, 16);
-        if (addresses.count(name))
+        if (0 && addresses.count(name))
             addresses[name] = MULTIPLY_DEFINED;
         else
             addresses[name] = offset_int;

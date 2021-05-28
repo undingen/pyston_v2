@@ -603,7 +603,7 @@ void aot_exit();
 #else
 // Define this function so that we can resolve it during trace-optimization,
 // but it doesn't need to be functional.
-PyObject* _PyEval_EvalFrame_AOT(PyFrameObject *f, int throwflag) {
+PyAPI_FUNC(PyObject*) _PyEval_EvalFrame_AOT(PyFrameObject *f, int throwflag) {
     Py_FatalError("AOT called but not enabled");
 }
 #endif

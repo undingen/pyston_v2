@@ -38,7 +38,7 @@
 #include "grammar.h"
 #include "parsetok.h"
 
-extern grammar _PyParser_Grammar; /* From graminit.c */
+extern Py_EXPORTED_SYMBOL grammar _PyParser_Grammar; /* From graminit.c */
 
 #ifdef lint
 #include <note.h>

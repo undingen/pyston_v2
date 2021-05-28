@@ -5038,43 +5038,43 @@ call_function_ceval(PyThreadState *tstate, PyObject ***pp_stack, Py_ssize_t opar
     return x;
 }
 
-PyObject * _Py_HOT_FUNCTION
+PyAPI_FUNC(PyObject*) _Py_HOT_FUNCTION
 call_function_ceval_no_kw(PyThreadState *tstate, PyObject ***pp_stack, Py_ssize_t oparg) {
     return call_function_ceval(tstate, pp_stack, oparg, NULL /*kwnames*/);
 }
-PyObject * _Py_HOT_FUNCTION
+PyAPI_FUNC(PyObject*) _Py_HOT_FUNCTION
 call_method_ceval_no_kw(PyThreadState *tstate, PyObject ***pp_stack, Py_ssize_t oparg) {
     return call_function_ceval(tstate, pp_stack, oparg, NULL /*kwnames*/);
 }
-PyObject* PyNumber_PowerNone(PyObject *v, PyObject *w) {
+PyAPI_FUNC(PyObject*) PyNumber_PowerNone(PyObject *v, PyObject *w) {
   return PyNumber_Power(v, w, Py_None);
 }
-PyObject* PyNumber_InPlacePowerNone(PyObject *v, PyObject *w) {
+PyAPI_FUNC(PyObject*) PyNumber_InPlacePowerNone(PyObject *v, PyObject *w) {
   return PyNumber_InPlacePower(v, w, Py_None);
 }
-PyObject* cmp_outcome(PyThreadState *tstate, int, PyObject *v, PyObject *w);
-PyObject* cmp_outcomePyCmp_LT(PyObject *v, PyObject *w) {
+PyAPI_FUNC(PyObject*) cmp_outcome(PyThreadState *tstate, int, PyObject *v, PyObject *w);
+PyAPI_FUNC(PyObject*) cmp_outcomePyCmp_LT(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_LT, v, w);
 }
-PyObject* cmp_outcomePyCmp_LE(PyObject *v, PyObject *w) {
+PyAPI_FUNC(PyObject*)  cmp_outcomePyCmp_LE(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_LE, v, w);
 }
-PyObject* cmp_outcomePyCmp_EQ(PyObject *v, PyObject *w) {
+PyAPI_FUNC(PyObject*)  cmp_outcomePyCmp_EQ(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_EQ, v, w);
 }
-PyObject* cmp_outcomePyCmp_NE(PyObject *v, PyObject *w) {
+PyAPI_FUNC(PyObject*) cmp_outcomePyCmp_NE(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_NE, v, w);
 }
-PyObject* cmp_outcomePyCmp_GT(PyObject *v, PyObject *w) {
+PyAPI_FUNC(PyObject*)  cmp_outcomePyCmp_GT(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_GT, v, w);
 }
-PyObject* cmp_outcomePyCmp_GE(PyObject *v, PyObject *w) {
+PyAPI_FUNC(PyObject*)  cmp_outcomePyCmp_GE(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_GE, v, w);
 }
-PyObject* cmp_outcomePyCmp_IN(PyObject *v, PyObject *w) {
+PyAPI_FUNC(PyObject*)  cmp_outcomePyCmp_IN(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_IN, v, w);
 }
-PyObject* cmp_outcomePyCmp_NOT_IN(PyObject *v, PyObject *w) {
+PyAPI_FUNC(PyObject*)  cmp_outcomePyCmp_NOT_IN(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_NOT_IN, v, w);
 }
 
@@ -5667,7 +5667,7 @@ _PyEval_RequestCodeExtraIndex(freefunc free)
 // So to be safe, clear it after you've freed all the functions with the
 // relevant extra data.
 // This is mostly just to make test_code.py not segfault on exit when run on Pyston
-void
+PyAPI_FUNC(void)
 _PyEval_ClearCodeExtraFreeFunc(Py_ssize_t index) {
     PyInterpreterState *interp = _PyInterpreterState_GET_UNSAFE();
     assert(index < interp->co_extra_user_count);

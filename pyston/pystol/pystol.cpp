@@ -111,7 +111,7 @@ static Knowledge* getTypeFact(Value* v, FactSet& facts) {
 }
 
 extern "C" {
-PyObject* _PyEval_EvalFrame_AOT(PyFrameObject*, int);
+PyAPI_FUNC(PyObject*) _PyEval_EvalFrame_AOT(PyFrameObject*, int);
 }
 
 bool PystolFactDeriver::deriveFacts(Value* v, FactSet& facts, LLVMEvaluator& eval) {

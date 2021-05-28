@@ -4593,7 +4593,7 @@ exit_yielding:
 
 // Entry point when executing a python function.
 // We check if we can use a JIT compiled version or have to use the Interpreter
-PyObject* _Py_HOT_FUNCTION
+PyAPI_FUNC(PyObject*) _Py_HOT_FUNCTION
 _PyEval_EvalFrame_AOT(PyFrameObject *f, int throwflag)
 {
     PyObject* retval = NULL;
