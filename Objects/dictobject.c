@@ -295,19 +295,11 @@ PyDict_Fini(void)
 }
 
 #define DK_LOG_SIZE(dk)  ((dk)->dk_log2_size)
+#define DK_IXSIZE(dk)    ((dk)->dk_ix_size)
 #if SIZEOF_VOID_P > 4
 #define DK_SIZE(dk)      (((int64_t)1)<<DK_LOG_SIZE(dk))
-#define DK_IXSIZE(dk)                     \
-    (DK_LOG_SIZE(dk) <= 7 ?               \
-        1 : DK_LOG_SIZE(dk) <= 15 ?       \
-            2 : DK_LOG_SIZE(dk) <= 31 ?   \
-                4 : sizeof(int64_t))
 #else
 #define DK_SIZE(dk)      (1<<DK_LOG_SIZE(dk))
-#define DK_IXSIZE(dk)                     \
-    (DK_LOG_SIZE(dk) <= 7 ?               \
-        1 : DK_LOG_SIZE(dk) <= 15 ?       \
-            2 : sizeof(int32_t))
 #endif
 #define DK_ENTRIES(dk) \
     ((PyDictKeyEntry*)(&((int8_t*)((dk)->dk_indices))[DK_SIZE(dk) * DK_IXSIZE(dk)]))
@@ -486,6 +478,7 @@ calculate_log2_keysize(Py_ssize_t minsize)
 /* static */ PyDictKeysObject empty_keys_struct = {
         1, /* dk_refcnt */
         0, /* dk_log2_size */
+        1, /* dk_ix_size */
         lookdict_split, /* dk_lookup */
         0, /* dk_usable (immutable) */
         0, /* dk_nentries */
@@ -621,6 +614,7 @@ _PyDict_CheckConsistency(PyObject *op, int check_content)
     _Py_INC_REFTOTAL;
     dk->dk_refcnt = 1;
     dk->dk_log2_size = log2_size;
+    dk->dk_ix_size = es;
     dk->dk_usable = usable;
     dk->dk_lookup = lookdict_unicode_nodummy;
     dk->dk_nentries = 0;

@@ -24,6 +24,7 @@ struct _dictkeysobject {
 
     /* Size of the hash table (dk_indices). It must be a power of 2. */
     unsigned char dk_log2_size;
+    unsigned char dk_ix_size;
 
     /* Function to lookup in the hash table (dk_indices):
 
