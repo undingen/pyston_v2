@@ -109,6 +109,7 @@ converting the dict to the combined table.
  * dictionaries, without any significant extra memory use.
  */
 #define PyDict_MINSIZE 8
+#define PyDict_LOG_MINSIZE 3
 
 #include "Python.h"
 #include "pycore_object.h"
@@ -293,23 +294,25 @@ PyDict_Fini(void)
     PyDict_ClearFreeList();
 }
 
-#define DK_SIZE(dk) ((dk)->dk_size)
+#define DK_LOG_SIZE(dk)  ((dk)->dk_log2_size)
 #if SIZEOF_VOID_P > 4
-#define DK_IXSIZE(dk)                          \
-    (DK_SIZE(dk) <= 0xff ?                     \
-        1 : DK_SIZE(dk) <= 0xffff ?            \
-            2 : DK_SIZE(dk) <= 0xffffffff ?    \
+#define DK_SIZE(dk)      (((int64_t)1)<<DK_LOG_SIZE(dk))
+#define DK_IXSIZE(dk)                     \
+    (DK_LOG_SIZE(dk) <= 7 ?               \
+        1 : DK_LOG_SIZE(dk) <= 15 ?       \
+            2 : DK_LOG_SIZE(dk) <= 31 ?   \
                 4 : sizeof(int64_t))
 #else
-#define DK_IXSIZE(dk)                          \
-    (DK_SIZE(dk) <= 0xff ?                     \
-        1 : DK_SIZE(dk) <= 0xffff ?            \
+#define DK_SIZE(dk)      (1<<DK_LOG_SIZE(dk))
+#define DK_IXSIZE(dk)                     \
+    (DK_LOG_SIZE(dk) <= 7 ?               \
+        1 : DK_LOG_SIZE(dk) <= 15 ?       \
             2 : sizeof(int32_t))
 #endif
 #define DK_ENTRIES(dk) \
     ((PyDictKeyEntry*)(&((int8_t*)((dk)->dk_indices))[DK_SIZE(dk) * DK_IXSIZE(dk)]))
 
-#define DK_MASK(dk) (((dk)->dk_size)-1)
+#define DK_MASK(dk) (DK_SIZE(dk)-1)
 #define IS_POWER_OF_2(x) (((x) & (x-1)) == 0)
 
 /* static */ void free_keys_object(PyDictKeysObject *keys);
@@ -404,12 +407,54 @@ dictkeys_set_index(PyDictKeysObject *keys, Py_ssize_t i, Py_ssize_t ix)
  * Fractions around 1/2 to 2/3 seem to work well in practice.
  */
 #define USABLE_FRACTION(n) (((n) << 1)/3)
+static inline int
+_Py_bit_length(unsigned long x)
+{
+#if (defined(__clang__) || defined(__GNUC__))
+    if (x != 0) {
+        // __builtin_clzl() is available since GCC 3.4.
+        // Undefined behavior for x == 0.
+        return (int)sizeof(unsigned long) * 8 - __builtin_clzl(x);
+    }
+    else {
+        return 0;
+    }
+#elif defined(_MSC_VER)
+    // _BitScanReverse() is documented to search 32 bits.
+    Py_BUILD_ASSERT(sizeof(unsigned long) <= 4);
+    unsigned long msb;
+    if (_BitScanReverse(&msb, x)) {
+        return (int)msb + 1;
+    }
+    else {
+        return 0;
+    }
+#else
+    const int BIT_LENGTH_TABLE[32] = {
+        0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5
+    };
+    int msb = 0;
+    while (x >= 32) {
+        msb += 6;
+        x >>= 6;
+    }
+    msb += BIT_LENGTH_TABLE[x];
+    return msb;
+#endif
+}
+static inline uint8_t
+calculate_log2_keysize(Py_ssize_t minsize)
+{
+    minsize = (minsize | PyDict_MINSIZE) - 1;
+    return _Py_bit_length(minsize | (PyDict_MINSIZE-1));
+}
 
 /* ESTIMATE_SIZE is reverse function of USABLE_FRACTION.
  * This can be used to reserve enough size to insert n entries without
  * resizing.
  */
-#define ESTIMATE_SIZE(n)  (((n)*3+1) >> 1)
+#define ESTIMATE_SIZE(n)  calculate_log2_keysize(((n)*3+1) >> 1)
 
 /* Alternative fraction that is otherwise close enough to 2n/3 to make
  * little difference. 8 * 2/3 == 8 * 5/8 == 5. 16 * 2/3 == 16 * 5/8 == 10.
@@ -440,7 +485,7 @@ dictkeys_set_index(PyDictKeysObject *keys, Py_ssize_t i, Py_ssize_t ix)
  */
 /* static */ PyDictKeysObject empty_keys_struct = {
         1, /* dk_refcnt */
-        1, /* dk_size */
+        0, /* dk_log2_size */
         lookdict_split, /* dk_lookup */
         0, /* dk_usable (immutable) */
         0, /* dk_nentries */
@@ -477,10 +522,10 @@ _PyDict_CheckConsistency(PyObject *op, int check_content)
 
     PyDictKeysObject *keys = mp->ma_keys;
     int splitted = _PyDict_HasSplitTable(mp);
-    Py_ssize_t usable = USABLE_FRACTION(keys->dk_size);
+    Py_ssize_t usable = USABLE_FRACTION(DK_SIZE(keys));
 
     CHECK(0 <= mp->ma_used && mp->ma_used <= usable);
-    CHECK(IS_POWER_OF_2(keys->dk_size));
+    //CHECK(IS_POWER_OF_2(keys->dk_size));
     CHECK(0 <= keys->dk_usable && keys->dk_usable <= usable);
     CHECK(0 <= keys->dk_nentries && keys->dk_nentries <= usable);
     CHECK(keys->dk_usable + keys->dk_nentries <= usable);
@@ -494,7 +539,7 @@ _PyDict_CheckConsistency(PyObject *op, int check_content)
         PyDictKeyEntry *entries = DK_ENTRIES(keys);
         Py_ssize_t i;
 
-        for (i=0; i < keys->dk_size; i++) {
+        for (i=0; i < DK_SIZE(keys); i++) {
             Py_ssize_t ix = dictkeys_get_index(keys, i);
             CHECK(DKIX_DUMMY <= ix && ix <= usable);
         }
@@ -536,12 +581,13 @@ _PyDict_CheckConsistency(PyObject *op, int check_content)
 }
 
 
-/* static */ PyDictKeysObject *new_keys_object(Py_ssize_t size)
+/* static */ PyDictKeysObject *new_keys_object(Py_ssize_t log2_size)
 {
     PyDictKeysObject *dk;
     Py_ssize_t es, usable;
 
     assert(size >= PyDict_MINSIZE);
+    int size = 1 << log2_size;
     assert(IS_POWER_OF_2(size));
 
     usable = USABLE_FRACTION(size);
@@ -574,7 +620,7 @@ _PyDict_CheckConsistency(PyObject *op, int check_content)
     }
     _Py_INC_REFTOTAL;
     dk->dk_refcnt = 1;
-    dk->dk_size = size;
+    dk->dk_log2_size = log2_size;
     dk->dk_usable = usable;
     dk->dk_lookup = lookdict_unicode_nodummy;
     dk->dk_nentries = 0;
@@ -595,7 +641,7 @@ free_keys_object(PyDictKeysObject *keys)
         Py_XDECREF(entries[i].me_key);
         Py_XDECREF(entries[i].me_value);
     }
-    if (keys->dk_size == PyDict_MINSIZE && numfreekeys < PyDict_MAXFREELIST) {
+    if (keys->dk_log2_size == PyDict_LOG_MINSIZE && numfreekeys < PyDict_MAXFREELIST) {
         keys_free_list[numfreekeys++] = keys;
         return;
     }
@@ -1028,7 +1074,7 @@ find_empty_slot(PyDictKeysObject *keys, Py_hash_t hash)
 /* static */ int
 insertion_resize(PyDictObject *mp)
 {
-    return dictresize(mp, GROWTH_RATE(mp));
+    return dictresize(mp, ESTIMATE_SIZE(GROWTH_RATE(mp)));
 }
 
 /*
@@ -1136,7 +1182,7 @@ insert_to_emptydict(PyDictObject *mp, PyObject *key, Py_hash_t hash,
 {
     assert(mp->ma_keys == Py_EMPTY_KEYS);
 
-    PyDictKeysObject *newkeys = new_keys_object(PyDict_MINSIZE);
+    PyDictKeysObject *newkeys = new_keys_object(PyDict_LOG_MINSIZE);
     if (newkeys == NULL) {
         return -1;
     }
@@ -1193,19 +1239,14 @@ After resizing a table is always combined,
 but can be resplit by make_keys_shared().
 */
 /* static */ int
-dictresize(PyDictObject *mp, Py_ssize_t minsize)
+dictresize(PyDictObject *mp, Py_ssize_t log2_newsize)
 {
     Py_ssize_t newsize, numentries;
     PyDictKeysObject *oldkeys;
     PyObject **oldvalues;
     PyDictKeyEntry *oldentries, *newentries;
 
-    /* Find the smallest table size > minused. */
-    for (newsize = PyDict_MINSIZE;
-         newsize < minsize && newsize > 0;
-         newsize <<= 1)
-        ;
-    if (newsize <= 0) {
+    if (log2_newsize <= 0) {
         PyErr_NoMemory();
         return -1;
     }
@@ -1218,7 +1259,7 @@ dictresize(PyDictObject *mp, Py_ssize_t minsize)
      */
 
     /* Allocate a new table. */
-    mp->ma_keys = new_keys_object(newsize);
+    mp->ma_keys = new_keys_object(log2_newsize);
     if (mp->ma_keys == NULL) {
         mp->ma_keys = oldkeys;
         return -1;
@@ -1268,7 +1309,7 @@ dictresize(PyDictObject *mp, Py_ssize_t minsize)
 
         assert(oldkeys->dk_lookup != lookdict_split);
         assert(oldkeys->dk_refcnt == 1);
-        if (oldkeys->dk_size == PyDict_MINSIZE &&
+        if (DK_SIZE(oldkeys) == PyDict_MINSIZE &&
             numfreekeys < PyDict_MAXFREELIST) {
             _Py_DEC_REFTOTAL;
             keys_free_list[numfreekeys++] = oldkeys;
@@ -1305,7 +1346,7 @@ make_keys_shared(PyObject *op)
         }
         else if (mp->ma_keys->dk_lookup == lookdict_unicode) {
             /* Remove dummy keys */
-            if (dictresize(mp, DK_SIZE(mp->ma_keys)))
+            if (dictresize(mp, DK_LOG_SIZE(mp->ma_keys)))
                 return NULL;
         }
         assert(mp->ma_keys->dk_lookup == lookdict_unicode_nodummy);
@@ -1332,8 +1373,9 @@ make_keys_shared(PyObject *op)
 PyObject *
 _PyDict_NewPresized(Py_ssize_t minused)
 {
-    const Py_ssize_t max_presize = 128 * 1024;
-    Py_ssize_t newsize;
+    const uint8_t log2_max_presize = 17;
+    const Py_ssize_t max_presize = ((Py_ssize_t)1) << log2_max_presize;
+    uint8_t log2_newsize;
     PyDictKeysObject *new_keys;
 
     if (minused <= USABLE_FRACTION(PyDict_MINSIZE)) {
@@ -1344,18 +1386,13 @@ _PyDict_NewPresized(Py_ssize_t minused)
      * large dict or MemoryError.
      */
     if (minused > USABLE_FRACTION(max_presize)) {
-        newsize = max_presize;
+        log2_newsize = log2_max_presize;
     }
     else {
-        Py_ssize_t minsize = ESTIMATE_SIZE(minused);
-        newsize = PyDict_MINSIZE*2;
-        while (newsize < minsize) {
-            newsize <<= 1;
-        }
+        log2_newsize = ESTIMATE_SIZE(minused);
     }
-    assert(IS_POWER_OF_2(newsize));
 
-    new_keys = new_keys_object(newsize);
+    new_keys = new_keys_object(log2_newsize);
     if (new_keys == NULL)
         return NULL;
     return new_dict(new_keys, NULL);
@@ -1474,12 +1511,12 @@ PyDict_GetItemWithError(PyObject *op, PyObject *key)
 
 #if PYSTON_SPEEDUPS
 // retrieves a borrowed object using the offset in bytes from ma_keys->dk_indices to the item
-PyObject* _PyDict_GetItemByOffset(PyDictObject *mp, PyObject *key, Py_ssize_t dk_size, int64_t offset) {
+PyObject* _PyDict_GetItemByOffset(PyDictObject *mp, PyObject *key, Py_ssize_t dk_log2_size, int64_t offset) {
     assert(PyDict_CheckExact((PyObject*)mp));
     assert(PyUnicode_CheckExact(key));
     assert(offset >= 0);
 
-    if (mp->ma_keys->dk_size != dk_size)
+    if (mp->ma_keys->dk_log2_size != dk_log2_size)
         return NULL;
 
     if (mp->ma_keys->dk_lookup == lookdict_split)
@@ -1492,7 +1529,7 @@ PyObject* _PyDict_GetItemByOffset(PyDictObject *mp, PyObject *key, Py_ssize_t dk
     return ep->me_value;
 }
 
-int64_t _PyDict_GetItemOffset(PyDictObject *mp, PyObject *key, Py_ssize_t *dk_size)
+int64_t _PyDict_GetItemOffset(PyDictObject *mp, PyObject *key, Py_ssize_t *dk_log2_size)
 {
     Py_hash_t hash;
 
@@ -1516,7 +1553,7 @@ int64_t _PyDict_GetItemOffset(PyDictObject *mp, PyObject *key, Py_ssize_t *dk_si
         return -1;
     }
 
-    *dk_size = mp->ma_keys->dk_size;
+    *dk_log2_size = mp->ma_keys->dk_log2_size;
     return (char*)(&DK_ENTRIES(mp->ma_keys)[ix]) - (char*)mp->ma_keys->dk_indices;
 }
 
@@ -1779,7 +1816,7 @@ _PyDict_DelItem_KnownHash(PyObject *op, PyObject *key, Py_hash_t hash)
 
     // Split table doesn't allow deletion.  Combine it.
     if (_PyDict_HasSplitTable(mp)) {
-        if (dictresize(mp, DK_SIZE(mp->ma_keys))) {
+        if (dictresize(mp, DK_LOG_SIZE(mp->ma_keys))) {
             return -1;
         }
         ix = (mp->ma_keys->dk_lookup)(mp, key, hash, &old_value);
@@ -1822,7 +1859,7 @@ _PyDict_DelItemIf(PyObject *op, PyObject *key,
 
     // Split table doesn't allow deletion.  Combine it.
     if (_PyDict_HasSplitTable(mp)) {
-        if (dictresize(mp, DK_SIZE(mp->ma_keys))) {
+        if (dictresize(mp, DK_LOG_SIZE(mp->ma_keys))) {
             return -1;
         }
         ix = (mp->ma_keys->dk_lookup)(mp, key, hash, &old_value);
@@ -1986,7 +2023,7 @@ _PyDict_Pop_KnownHash(PyObject *dict, PyObject *key, Py_hash_t hash, PyObject *d
 
     // Split table doesn't allow deletion.  Combine it.
     if (_PyDict_HasSplitTable(mp)) {
-        if (dictresize(mp, DK_SIZE(mp->ma_keys))) {
+        if (dictresize(mp, DK_LOG_SIZE(mp->ma_keys))) {
             return NULL;
         }
         ix = (mp->ma_keys->dk_lookup)(mp, key, hash, &old_value);
@@ -2643,7 +2680,7 @@ dict_merge(PyObject *a, PyObject *b, int override)
          * incrementally resizing as we insert new items.  Expect
          * that there will be no (or few) overlapping keys.
          */
-        if (USABLE_FRACTION(mp->ma_keys->dk_size) < other->ma_used) {
+        if (USABLE_FRACTION(DK_SIZE(mp->ma_keys)) < other->ma_used) {
             if (dictresize(mp, ESTIMATE_SIZE(mp->ma_used + other->ma_used))) {
                return -1;
             }
@@ -3227,7 +3264,7 @@ dict_popitem_impl(PyDictObject *self)
     }
     /* Convert split table to combined table */
     if (self->ma_keys->dk_lookup == lookdict_split) {
-        if (dictresize(self, DK_SIZE(self->ma_keys))) {
+        if (dictresize(self, DK_LOG_SIZE(self->ma_keys))) {
             Py_DECREF(res);
             return NULL;
         }
@@ -3459,7 +3496,7 @@ dict_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 
     d->ma_used = 0;
     d->ma_version_tag = DICT_NEXT_VERSION();
-    d->ma_keys = new_keys_object(PyDict_MINSIZE);
+    d->ma_keys = new_keys_object(PyDict_LOG_MINSIZE);
     if (d->ma_keys == NULL) {
         Py_DECREF(self);
         return NULL;
@@ -4758,7 +4795,7 @@ dictvalues_reversed(_PyDictViewObject *dv)
 PyDictKeysObject *
 _PyDict_NewKeysForClass(void)
 {
-    PyDictKeysObject *keys = new_keys_object(PyDict_MINSIZE);
+    PyDictKeysObject *keys = new_keys_object(PyDict_LOG_MINSIZE);
     if (keys == NULL)
         PyErr_Clear();
     else

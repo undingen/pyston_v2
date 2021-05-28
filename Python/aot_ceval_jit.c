@@ -1478,7 +1478,7 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
             {
                 // if (mp->ma_keys->dk_size != dk_size) goto slow_path;
                 | mov res, [arg2 + offsetof(PyDictObject, ma_keys)]
-                | cmp_imm_mem [res + offsetof(PyDictKeysObject, dk_size)], la->u.offset_cache.dk_size
+                | cmp byte [res + offsetof(PyDictKeysObject, dk_log2_size)], la->u.offset_cache.dk_size
                 | jne >1
 
                 // if (mp->ma_keys->dk_lookup == lookdict_split) goto slow_path;
