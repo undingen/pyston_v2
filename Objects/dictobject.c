@@ -1068,7 +1068,7 @@ find_empty_slot(PyDictKeysObject *keys, Py_hash_t hash)
 /* static */ int
 insertion_resize(PyDictObject *mp)
 {
-    return dictresize(mp, ESTIMATE_SIZE(GROWTH_RATE(mp)));
+    return dictresize(mp, calculate_log2_keysize(GROWTH_RATE(mp)));
 }
 
 /*
