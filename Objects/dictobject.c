@@ -327,7 +327,7 @@ dictkeys_decref(PyDictKeysObject *dk)
 }
 
 /* lookup indices.  returns DKIX_EMPTY, DKIX_DUMMY, or ix >=0 */
-/* static */ inline Py_ssize_t
+/* static */ /*inline*/ Py_ssize_t
 dictkeys_get_index(PyDictKeysObject *keys, Py_ssize_t i)
 {
     Py_ssize_t s = DK_SIZE(keys);
@@ -356,7 +356,7 @@ dictkeys_get_index(PyDictKeysObject *keys, Py_ssize_t i)
 }
 
 /* write to indices. */
-/* static */ inline void
+/* static */ /*inline*/ void
 dictkeys_set_index(PyDictKeysObject *keys, Py_ssize_t i, Py_ssize_t ix)
 {
     Py_ssize_t s = DK_SIZE(keys);
