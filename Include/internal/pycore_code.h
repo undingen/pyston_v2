@@ -4,9 +4,19 @@
 extern "C" {
 #endif
 typedef struct {
-    PyObject *ptr;  /* Cached pointer (borrowed reference) */
-    uint64_t globals_ver;  /* ma_version of global dict */
-    uint64_t builtins_ver; /* ma_version of builtin dict */
+    union {
+        struct {
+            uint64_t globals_ver;  /* ma_version of global dict */
+            uint64_t builtins_ver; /* ma_version of builtin dict */
+            PyObject *ptr;  /* Cached pointer (borrowed reference) */
+        } value_cache;
+        struct {
+            Py_ssize_t dk_size; /* dk_size of the dict */
+            int64_t offset; /* offset in bytes from ma_keys->dk_indices to the item in the hash table */
+        } offset_cache;
+    } u;
+
+    char cache_type; //0=cached value, 1=cached index
 } _PyOpcache_LoadGlobal;
 
 // This is a special value for the builtins_ver field

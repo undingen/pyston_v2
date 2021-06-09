@@ -1333,7 +1333,7 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
         // I think it's still worth leaving it in to reduce potential downside in bad cases,
         // as it definitely helps with the other opcodes.
         // globals_ver != 0 makes sure we don't write out an always-failing inline cache
-        if (co_opcache->num_failed == 0 && co_opcache->u.lg.globals_ver != 0) {
+        if (co_opcache->num_failed == 0) {
             _PyOpcache_LoadGlobal *lg = &co_opcache->u.lg;
 
             ++jit_stat_load_global_inline;
@@ -1341,14 +1341,14 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
             deferred_vs_convert_reg_to_stack(Dst);
 
             | mov arg3, [f + offsetof(PyFrameObject, f_globals)]
-            | cmp_imm_mem [arg3 + offsetof(PyDictObject, ma_version_tag)], lg->globals_ver
+            | cmp_imm_mem [arg3 + offsetof(PyDictObject, ma_version_tag)], lg->u.value_cache.globals_ver
             | jne >1
-            if (lg->builtins_ver != LOADGLOBAL_WAS_GLOBAL) {
+            if (lg->u.value_cache.builtins_ver != LOADGLOBAL_WAS_GLOBAL) {
                 | mov arg3, [f + offsetof(PyFrameObject, f_builtins)]
-                | cmp_imm_mem [arg3 + offsetof(PyDictObject, ma_version_tag)], lg->builtins_ver
+                | cmp_imm_mem [arg3 + offsetof(PyDictObject, ma_version_tag)], lg->u.value_cache.builtins_ver
                 | jne >1
             }
-            emit_mov_imm(Dst, res_idx, (unsigned long)lg->ptr);
+            emit_mov_imm(Dst, res_idx, (unsigned long)lg->u.value_cache.ptr);
             emit_incref(Dst, res_idx);
             if (jit_stats_enabled) {
                 | inc qword [&jit_stat_load_global_hit]

@@ -75,6 +75,8 @@ void format_awaitable_error(PyThreadState *, PyTypeObject *, int);
 int do_raise(PyThreadState *tstate, PyObject *exc, PyObject *cause);
 int unpack_iterable(PyThreadState *, PyObject *, int, int, PyObject **);
 
+PyObject* _PyDict_GetItemByOffset(PyDictObject *mp, PyObject *key, Py_ssize_t dk_size, int64_t offset);
+
 #define PREDICT(x)
 #define PREDICTED(x)
 
@@ -762,18 +764,33 @@ JIT_HELPER_WITH_NAME_OPCACHE_AOT(LOAD_GLOBAL) {
     if (co_opcache != NULL && co_opcache->optimized > 0) {
         _PyOpcache_LoadGlobal *lg = &co_opcache->u.lg;
 
-        if (lg->globals_ver ==
-                ((PyDictObject *)f->f_globals)->ma_version_tag
-            && lg->builtins_ver ==
-                ((PyDictObject *)f->f_builtins)->ma_version_tag)
-        {
-            PyObject *ptr = lg->ptr;
-            OPCACHE_STAT_GLOBAL_HIT();
-            assert(ptr != NULL);
-            Py_INCREF(ptr);
-            //PUSH(ptr);
-            //DISPATCH();
-            return ptr;
+
+        if (lg->cache_type == 0) {
+            if (lg->u.value_cache.globals_ver ==
+                    ((PyDictObject *)f->f_globals)->ma_version_tag
+                && (lg->u.value_cache.builtins_ver == LOADGLOBAL_WAS_GLOBAL ||
+                    lg->u.value_cache.builtins_ver == ((PyDictObject *)f->f_builtins)->ma_version_tag))
+            {
+                PyObject *ptr = lg->u.value_cache.ptr;
+                OPCACHE_STAT_GLOBAL_HIT();
+                assert(ptr != NULL);
+                Py_INCREF(ptr);
+                //PUSH(ptr);
+                //DISPATCH();
+                return ptr;
+            }
+        } else {
+            v = _PyDict_GetItemByOffset((PyDictObject*)f->f_globals, name, lg->u.offset_cache.dk_size, lg->u.offset_cache.offset);
+
+            if (v) {
+                PyObject *ptr = v;
+                OPCACHE_STAT_GLOBAL_HIT();
+                assert(ptr != NULL);
+                Py_INCREF(ptr);
+                //PUSH(ptr);
+                //DISPATCH();
+                return ptr;
+            }
         }
     }
 
@@ -806,11 +823,12 @@ JIT_HELPER_WITH_NAME_OPCACHE_AOT(LOAD_GLOBAL) {
         }
 
         co_opcache->optimized = 1;
-        lg->globals_ver =
+        lg->cache_type = 0;
+        lg->u.value_cache.globals_ver =
             ((PyDictObject *)f->f_globals)->ma_version_tag;
-        lg->builtins_ver =
+        lg->u.value_cache.builtins_ver =
             ((PyDictObject *)f->f_builtins)->ma_version_tag;
-        lg->ptr = v; /* borrowed */
+        lg->u.value_cache.ptr = v; /* borrowed */
     }
 
     Py_INCREF(v);

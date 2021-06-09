@@ -3020,22 +3020,41 @@ sa_common:
                 if (co_opcache != NULL && co_opcache->optimized > 0) {
                     _PyOpcache_LoadGlobal *lg = &co_opcache->u.lg;
 
-                    if (lg->globals_ver ==
-                            ((PyDictObject *)f->f_globals)->ma_version_tag
-                        && (lg->builtins_ver == LOADGLOBAL_WAS_GLOBAL ||
-                            lg->builtins_ver == ((PyDictObject *)f->f_builtins)->ma_version_tag))
-                    {
+                    if (lg->cache_type == 0) {
+                        if (lg->u.value_cache.globals_ver ==
+                                ((PyDictObject *)f->f_globals)->ma_version_tag
+                            && (lg->u.value_cache.builtins_ver == LOADGLOBAL_WAS_GLOBAL ||
+                                lg->u.value_cache.builtins_ver == ((PyDictObject *)f->f_builtins)->ma_version_tag))
+                        {
+    #if OPCACHE_STATS
+                            loadglobal_hits++;
+    #endif
+                            co_opcache->num_failed = 0;
+                            PyObject *ptr = lg->u.value_cache.ptr;
+                            OPCACHE_STAT_GLOBAL_HIT();
+                            assert(ptr != NULL);
+                            Py_INCREF(ptr);
+                            PUSH(ptr);
+                            DISPATCH();
+                        }
+                    } else {
+                        name = GETITEM(names, oparg);
+                        v = _PyDict_GetItemByOffset((PyDictObject*)f->f_globals, name, lg->u.offset_cache.dk_size, lg->u.offset_cache.offset);
+
+                        if (v) {
 #if OPCACHE_STATS
-                        loadglobal_hits++;
+                            loadglobal_hits++;
 #endif
-                        co_opcache->num_failed = 0;
-                        PyObject *ptr = lg->ptr;
-                        OPCACHE_STAT_GLOBAL_HIT();
-                        assert(ptr != NULL);
-                        Py_INCREF(ptr);
-                        PUSH(ptr);
-                        DISPATCH();
+                            co_opcache->num_failed = 0;
+                            PyObject *ptr = v;
+                            OPCACHE_STAT_GLOBAL_HIT();
+                            Py_INCREF(ptr);
+                            PUSH(ptr);
+                            DISPATCH();
+                        }
                     }
+
+
 #if OPCACHE_STATS
                     loadglobal_misses++;
 #endif
@@ -3070,16 +3089,26 @@ sa_common:
                     } else {
                         OPCACHE_STAT_GLOBAL_MISS();
                     }
-
                     co_opcache->optimized = 1;
-                    lg->globals_ver =
-                        ((PyDictObject *)f->f_globals)->ma_version_tag;
-                    if (wasglobal)
-                        lg->builtins_ver = LOADGLOBAL_WAS_GLOBAL;
-                    else
-                        lg->builtins_ver =
-                            ((PyDictObject *)f->f_builtins)->ma_version_tag;
-                    lg->ptr = v; /* borrowed */
+
+                    if (wasglobal && co_opcache->num_failed > 1) {
+                        Py_ssize_t dk_size;
+                        int64_t offset = _PyDict_GetItemOffset((PyDictObject*)f->f_globals, name, &dk_size);
+                        if (offset < 0)
+                            goto value_cache;
+                        lg->cache_type = 1;
+                        lg->u.offset_cache.dk_size = dk_size;
+                        lg->u.offset_cache.offset = offset;
+                    } else {
+value_cache:
+                        lg->cache_type = 0;
+                        lg->u.value_cache.globals_ver = ((PyDictObject *)f->f_globals)->ma_version_tag;
+                        if (wasglobal)
+                            lg->u.value_cache.builtins_ver = LOADGLOBAL_WAS_GLOBAL;
+                        else
+                            lg->u.value_cache.builtins_ver = ((PyDictObject *)f->f_builtins)->ma_version_tag;
+                        lg->u.value_cache.ptr = v; /* borrowed */
+                    }
                 }
 
                 Py_INCREF(v);
