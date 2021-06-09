@@ -1340,16 +1340,46 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
 
             deferred_vs_convert_reg_to_stack(Dst);
 
-            | mov arg3, [f + offsetof(PyFrameObject, f_globals)]
-            | cmp_imm_mem [arg3 + offsetof(PyDictObject, ma_version_tag)], lg->u.value_cache.globals_ver
-            | jne >1
-            if (lg->u.value_cache.builtins_ver != LOADGLOBAL_WAS_GLOBAL) {
-                | mov arg3, [f + offsetof(PyFrameObject, f_builtins)]
-                | cmp_imm_mem [arg3 + offsetof(PyDictObject, ma_version_tag)], lg->u.value_cache.builtins_ver
+            if (lg->cache_type == 0) {
+                | mov arg3, [f + offsetof(PyFrameObject, f_globals)]
+                | cmp_imm_mem [arg3 + offsetof(PyDictObject, ma_version_tag)], lg->u.value_cache.globals_ver
                 | jne >1
+                if (lg->u.value_cache.builtins_ver != LOADGLOBAL_WAS_GLOBAL) {
+                    | mov arg3, [f + offsetof(PyFrameObject, f_builtins)]
+                    | cmp_imm_mem [arg3 + offsetof(PyDictObject, ma_version_tag)], lg->u.value_cache.builtins_ver
+                    | jne >1
+                }
+                emit_mov_imm(Dst, res_idx, (unsigned long)lg->u.value_cache.ptr);
+                emit_incref(Dst, res_idx);
+            } else {
+                | mov arg2, [f + offsetof(PyFrameObject, f_globals)]
+                // if (mp->ma_keys->dk_size != dk_size) goto slow_path;
+                | mov res, [arg2 + offsetof(PyDictObject, ma_keys)]
+                | cmp_imm_mem [res + offsetof(PyDictKeysObject, dk_size)], lg->u.offset_cache.dk_size
+                | jne >1
+
+                // if (mp->ma_keys->dk_lookup == lookdict_split) goto slow_path;
+                | cmp_imm_mem [res + offsetof(PyDictKeysObject, dk_lookup)], lookdict_split
+                | je >1
+
+                // PyDictKeyEntry *arg3 = (PyDictKeyEntry*)(mp->ma_keys->dk_indices + offset);
+                uint64_t total_offset = offsetof(PyDictKeysObject, dk_indices) + lg->u.offset_cache.offset;
+                if (IS_32BIT_SIGNED_VAL(total_offset)) {
+                    | lea arg3, [res + total_offset]
+                } else {
+                    emit_mov_imm(Dst, tmp_idx, total_offset);
+                    | lea arg3, [res + tmp]
+                }
+
+                // if (ep->me_key != key) goto slow_path;
+                | cmp_imm_mem [arg3 + offsetof(PyDictKeyEntry, me_key)], PyTuple_GET_ITEM(Dst->co_names, oparg)
+                | jne >1
+
+                // res = ep->me_value;
+                | mov res, [arg3 + offsetof(PyDictKeyEntry, me_value)]
+                emit_incref(Dst, res_idx);
             }
-            emit_mov_imm(Dst, res_idx, (unsigned long)lg->u.value_cache.ptr);
-            emit_incref(Dst, res_idx);
+
             if (jit_stats_enabled) {
                 | inc qword [&jit_stat_load_global_hit]
             }
