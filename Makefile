@@ -54,13 +54,14 @@ clang $(CLANG): | pyston/build/Release/build.ninja
 	cd pyston/build/Release; ninja clang llvm-dis llvm-as llvm-link opt compiler-rt llvm-profdata
 
 BOLT:=pyston/build/bolt/bin/llvm-bolt
+PERF2BOLT:=pyston/build/bolt/bin/perf2bolt
 MERGE_FDATA:=pyston/build/bolt/bin/merge-fdata
 pyston/build/bolt/build.ninja:
 	mkdir -p pyston/build/bolt
 	cd pyston/build/bolt; cmake -G Ninja ../../bolt/bolt/llvm -DLLVM_TARGETS_TO_BUILD="X86" -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_INCLUDE_TESTS=0 -DLLVM_ENABLE_PROJECTS=bolt
 bolt: $(BOLT)
 $(BOLT): pyston/build/bolt/build.ninja
-	cd pyston/build/bolt; ninja llvm-bolt merge-fdata
+	cd pyston/build/bolt; ninja llvm-bolt merge-fdata perf2bolt
 
 # this flags are what the default debian/ubuntu cpython uses
 CPYTHON_EXTRA_CFLAGS:=-fstack-protector -specs=$(CURDIR)/pyston/tools/no-pie-compile.specs -D_FORTIFY_SOURCE=2
@@ -110,7 +111,8 @@ pyston/build/cpython_$(1)_build/pyston: pyston/build/cpython_$(1)_build/Makefile
 	touch $$@ # some cpython .c files don't affect the python executable
 
 pyston/build/cpython_$(1)_install/usr/bin/python3: pyston/build/cpython_$(1)_build/pyston
-	cd pyston/build/cpython_$(1)_build; $$(MAKE) install DESTDIR=$(4)
+	cd pyston/build/cpython_$(1)_build; $$(MAKE) install DESTDIR=$(4) $(if $(findstring so,$(5)),INSTSONAME=libpython3.8-pyston2.2.so.1.0.prebolt)
+
 $(1): pyston/build/$(1)_env/bin/python
 
 ifeq ($(5),binary)
@@ -118,7 +120,7 @@ ifeq ($(5),binary)
 pyston/build/cpython_$(1)_install/usr/bin/python3.bolt.fdata: pyston/build/cpython_$(1)_install/usr/bin/python3 $(BOLT) | $(VIRTUALENV)
 	rm -rf /tmp/tmp_env_$(1)
 	rm $$<.bolt*.fdata || true
-	$(BOLT) $$< -instrument -instrumentation-file-append-pid -instrumentation-file=$(abspath pyston/build/cpython_$(1)_install/usr/bin/python3.bolt) -o $$<.bolt_inst
+	$(BOLT) $$< -instrument -instrumentation-file-append-pid -instrumentation-file=$$(abspath pyston/build/cpython_$(1)_install/usr/bin/python3.bolt) -o $$<.bolt_inst
 	$(VIRTUALENV) -p $$<.bolt_inst /tmp/tmp_env_$(1)
 	/tmp/tmp_env_$(1)/bin/pip install -r pyston/pgo_requirements.txt
 	/tmp/tmp_env_$(1)/bin/python3 pyston/run_profile_task.py
@@ -133,23 +135,24 @@ pyston/build/$(1)_env/bin/python: pyston/build/cpython_$(1)_install/usr/bin/pyth
 else
 
 pyston/build/$(1)_env/bin/python: pyston/build/cpython_$(1)_install/usr/bin/python3 | $(VIRTUALENV)
-	LD_LIBRARY_PATH=$${LD_LIBRARY_PATH}:$(abspath pyston/build/cpython_$(1)_install/usr/lib) $(VIRTUALENV) -p $$< pyston/build/$(1)_env
+	LD_LIBRARY_PATH=$${LD_LIBRARY_PATH}:$$(abspath pyston/build/cpython_$(1)_install/usr/lib) $(VIRTUALENV) -p $$< pyston/build/$(1)_env
 
 endif
 
 ifeq ($(5),so)
 
-# WIP: should use INSTSONAME to install to a different name, use LD_PRELOAD to load the instrumentated so, and then have bolt write out the optimized so to the correct location
-pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0.bolt: pyston/build/cpython_$(1)_install/usr/bin/python3
-	bash -c "mv pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0{,.base}"
-	rm -rfv /tmp/tmp_env_$(1)
-	rm $$@.* || true
-	$(BOLT) pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0.base -instrument -instrumentation-file-append-pid -instrumentation-file=$(abspath $$@) -o pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0 -update-debug-sections
-	LD_LIBRARY_PATH=$${LD_LIBRARY_PATH}:$(abspath pyston/build/cpython_$(1)_install/usr/lib) $(VIRTUALENV) -p $$< /tmp/tmp_env_$(1)
-	LD_LIBRARY_PATH=$${LD_LIBRARY_PATH}:$(abspath pyston/build/cpython_$(1)_install/usr/lib) /tmp/tmp_env_$(1)/bin/pip install -r pyston/benchmark_requirements.txt
-	LD_LIBRARY_PATH=$${LD_LIBRARY_PATH}:$(abspath pyston/build/cpython_$(1)_install/usr/lib) /tmp/tmp_env_$(1)/bin/python3 pyston/run_profile_task.py
-	$(MERGE_FDATA) $$@.*.fdata > $$@.fdata
-	$(BOLT) pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0.base -o $$@ -data=$$@.fdata -update-debug-sections -reorder-blocks=cache+ -reorder-functions=hfsort+ -split-functions=3 -icf=1 -inline-all -split-eh -reorder-functions-use-hot-size -peepholes=all -jump-tables=aggressive -inline-ap -indirect-call-promotion=all -dyno-stats -frame-opt=hot -use-gnu-stack
+pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0.fdata: pyston/build/cpython_$(1)_install/usr/bin/python3
+	rm -rf /tmp/tmp_env_$(1)
+	LD_LIBRARY_PATH=$${LD_LIBRARY_PATH}:$$(abspath pyston/build/cpython_$(1)_install/usr/lib) LD_PRELOAD=libpython3.8-pyston2.2.so.1.0.prebolt $(VIRTUALENV) -p $$< /tmp/tmp_env_$(1)
+	LD_LIBRARY_PATH=$${LD_LIBRARY_PATH}:$$(abspath pyston/build/cpython_$(1)_install/usr/lib) LD_PRELOAD=libpython3.8-pyston2.2.so.1.0.prebolt /tmp/tmp_env_$(1)/bin/pip install -r pyston/pgo_requirements.txt
+	LD_LIBRARY_PATH=$${LD_LIBRARY_PATH}:$$(abspath pyston/build/cpython_$(1)_install/usr/lib) LD_PRELOAD=libpython3.8-pyston2.2.so.1.0.prebolt perf record -e cycles:u -j any,u -o $$(patsubst %.fdata,%.perf,$$@) -- /tmp/tmp_env_$(1)/bin/python3 pyston/run_profile_task.py
+	$(PERF2BOLT) -p $$(patsubst %.fdata,%.perf,$$@) -o $$@ pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0.prebolt
+
+pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0: pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0.fdata
+	$(BOLT) pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0.prebolt -o $$@ -data=$$< -update-debug-sections -reorder-blocks=cache+ -reorder-functions=hfsort+ -split-functions=3 -icf=1 -inline-all -split-eh -reorder-functions-use-hot-size -peepholes=all -jump-tables=aggressive -inline-ap -indirect-call-promotion=all -dyno-stats -frame-opt=hot -use-gnu-stack
+	ln -sf $(abspath $$@) pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so
+
+pyston/build/$(1)_env/bin/python: pyston/build/cpython_$(1)_install/usr/lib/libpython3.8-pyston2.2.so.1.0
 
 endif
 
@@ -191,6 +194,7 @@ $(call make_cpython_build,releaseshared,PROFILE_TASK="$(PROFILE_TASK)" CC=gcc CF
 # We have to --disable-debugging-features for consistency with the bc build
 # If we had a separate bc-dbg build then we could change this
 $(call make_cpython_build,dbg,CC=gcc CFLAGS_NODIST="$(CPYTHON_EXTRA_CFLAGS) -fno-reorder-blocks-and-partition" LDFLAGS_NODIST="$(CPYTHON_EXTRA_LDFLAGS) -Wl$(COMMA)--emit-relocs" ../../../configure --prefix=$(abspath pyston/build/cpython_dbg_install/usr) --with-pydebug --disable-debugging-features --enable-configure,pyston/build/aot/aot_all.bc)
+$(call make_cpython_build,dbgshared,CC=gcc CFLAGS_NODIST="$(CPYTHON_EXTRA_CFLAGS) -fno-reorder-blocks-and-partition" LDFLAGS_NODIST="$(CPYTHON_EXTRA_LDFLAGS) -Wl$(COMMA)--emit-relocs" ../../../configure --prefix=$(abspath pyston/build/cpython_dbgshared_install/usr) --with-pydebug --disable-debugging-features --enable-shared --enable-configure,pyston/build/aot_pic/aot_all.bc,,so)
 $(call make_cpython_build,stock,PROFILE_TASK="$(PROFILE_TASK) || true" CC=gcc CFLAGS_NODIST="$(CPYTHON_EXTRA_CFLAGS)" LDFLAGS_NODIST="$(CPYTHON_EXTRA_LDFLAGS)" ../../../configure --prefix=$(abspath pyston/build/cpython_stock_install/usr) --enable-optimizations --with-lto --disable-pyston --enable-configure,)
 $(call make_cpython_build,stockunopt,CC=gcc CFLAGS_NODIST="$(CPYTHON_EXTRA_CFLAGS)" LDFLAGS_NODIST="$(CPYTHON_EXTRA_LDFLAGS)" ../../../configure --prefix=$(abspath pyston/build/cpython_stockunopt_install/usr) --disable-pyston --enable-configure,)
 $(call make_cpython_build,stockdbg,CC=gcc CFLAGS_NODIST="$(CPYTHON_EXTRA_CFLAGS)" LDFLAGS_NODIST="$(CPYTHON_EXTRA_LDFLAGS)" ../../../configure --prefix=$(abspath pyston/build/cpython_stockdbg_install/usr) --disable-pyston --with-pydebug --enable-configure,)
