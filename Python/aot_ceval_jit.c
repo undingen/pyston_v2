@@ -1027,33 +1027,41 @@ static void emit_load_freevar(Jit* Dst, int r_idx, int num) {
 
 //////////////////////////////////////////////////////////////
 // Deferred value stack functions
+
+static int deferred_vs_store_to_vs_top_n(Jit* Dst, int n) {
+    if (Dst->deferred_vs_next < n)
+        return -1;
+
+    for (int i=Dst->deferred_vs_next; i > 0 && n > 0; --i, --n) {
+        DeferredValueStackEntry* entry = &Dst->deferred_vs[i-1];
+        if (entry->loc == CONST) {
+            PyObject* obj = PyTuple_GET_ITEM(Dst->co_consts, entry->val);
+            emit_mov_imm(Dst, tmp_idx, (unsigned long)obj);
+            if (!is_immortal(obj))
+                emit_incref(Dst, tmp_idx);
+            | mov [vsp+ 8 * (i-1)], tmp
+        } else if (entry->loc == FAST) {
+            | mov tmp, [f + get_fastlocal_offset(entry->val)]
+            emit_incref(Dst, tmp_idx);
+            | mov [vsp+ 8 * (i-1)], tmp
+        } else if (entry->loc == REGISTER) {
+            | mov [vsp+ 8 * (i-1)], Rq(entry->val)
+            if (entry->val == vs_preserved_reg_idx) {
+                emit_mov_imm(Dst, vs_preserved_reg_idx, 0); // we have to clear it because error path will xdecref
+            }
+        } else if (entry->loc == STACK) {
+            | mov tmp, [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
+            | mov qword [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8], 0
+            | mov [vsp+ 8 * (i-1)], tmp
+        } else {
+            JIT_ASSERT(0, "entry->loc not implemented");
+        }
+    }
+}
+
 static void deferred_vs_emit(Jit* Dst) {
     if (Dst->deferred_vs_next) {
-        for (int i=Dst->deferred_vs_next; i>0; --i) {
-            DeferredValueStackEntry* entry = &Dst->deferred_vs[i-1];
-            if (entry->loc == CONST) {
-                PyObject* obj = PyTuple_GET_ITEM(Dst->co_consts, entry->val);
-                emit_mov_imm(Dst, tmp_idx, (unsigned long)obj);
-                if (!is_immortal(obj))
-                    emit_incref(Dst, tmp_idx);
-                | mov [vsp+ 8 * (i-1)], tmp
-            } else if (entry->loc == FAST) {
-                | mov tmp, [f + get_fastlocal_offset(entry->val)]
-                emit_incref(Dst, tmp_idx);
-                | mov [vsp+ 8 * (i-1)], tmp
-            } else if (entry->loc == REGISTER) {
-                | mov [vsp+ 8 * (i-1)], Rq(entry->val)
-                if (entry->val == vs_preserved_reg_idx) {
-                    emit_mov_imm(Dst, vs_preserved_reg_idx, 0); // we have to clear it because error path will xdecref
-                }
-            } else if (entry->loc == STACK) {
-                | mov tmp, [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
-                | mov qword [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8], 0
-                | mov [vsp+ 8 * (i-1)], tmp
-            } else {
-                JIT_ASSERT(0, "entry->loc not implemented");
-            }
-        }
+        deferred_vs_store_to_vs_top_n(Dst, Dst->deferred_vs_next);
         emit_adjust_vs(Dst, Dst->deferred_vs_next);
     }
 }
@@ -2159,32 +2167,48 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             break;
 
         case CALL_FUNCTION:
-        case CALL_METHOD:
-            deferred_vs_apply(Dst);
+        case CALL_METHOD: {
+            int num_vs_args = oparg + 1;
+            if (opcode == CALL_METHOD)
+                num_vs_args += 1;
+
+            int used_opt = 0;
+            if (Dst->deferred_vs_next >= num_vs_args) {
+                //fprintf(stderr, "n %d %d\n", num_vs_args, Dst->deferred_vs_next-num_vs_args);
+                used_opt = Dst->deferred_vs_next;
+                deferred_vs_store_to_vs_top_n(Dst, num_vs_args);
+                deferred_vs_remove(Dst, num_vs_args);
+                deferred_vs_convert_reg_to_stack(Dst);
+            } else {
+                deferred_vs_apply(Dst);
+            }
             | mov arg1, tstate
 
             // arg2 = vsp
-            | mov arg2, vsp
+            if (used_opt) {
+                | lea arg2, [vsp + 8*used_opt]
+            } else {
+                | mov arg2, vsp
+            }
 
             emit_mov_imm(Dst, arg3_idx, oparg);
 
-            int num_vs_args = oparg + 1;
-
             if (opcode == CALL_METHOD) {
-                num_vs_args += 1;
-
                 // this is taken from clang:
                 // meth = PEEK(oparg + 2);
                 // arg3 = ((meth == 0) ? 0 : 1) + oparg
-                | cmp qword [vsp - (8*num_vs_args)], 1
+                | cmp qword [arg2 - (8*num_vs_args)], 1
                 | sbb arg3, -1
             }
             emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */));
-            emit_adjust_vs(Dst, -num_vs_args);
+            if (!used_opt) {
+                emit_adjust_vs(Dst, -num_vs_args);
+            }
 
             emit_if_res_0_error(Dst);
             deferred_vs_push(Dst, REGISTER, res_idx);
             break;
+        }
 
         case FOR_ITER:
             deferred_vs_peek_top_and_apply(Dst, arg1_idx);
