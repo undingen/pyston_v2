@@ -13,7 +13,7 @@ mkdir -p $OUTPUT_DIR
 PARALLEL=
 while [[ $# -gt 0 ]]; do
     case $1 in
-        -p)
+        -j)
             PARALLEL=1
             shift
             ;;
