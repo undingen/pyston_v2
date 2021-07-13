@@ -26,6 +26,10 @@ done
 # clean repo just to be sure, should also speedup copying the repo while running docker build
 make clean
 
+# we have to set /proc/sys/kernel/kptr_restrict to 0 because 'perf record' assumes it's 0 if user id is 0.
+# if 1 perf will cause a segmentation fault.
+sudo sysctl kernel.kptr_restrict=0
+
 function make_release {
     DIST=$1
 
