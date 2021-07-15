@@ -42,6 +42,7 @@ chown -R $(id -u):$(id -g) /host-volume-out/results_pyston_${DIST}
 # some benchmarks don't run on python 3.5/3.6 so only run this benchmarks on 3.8 (20.04)
 if [ "$DIST" = "20.04" ]; then
     apt-get install -y python3 python3-dev python3-pip python3-venv
+    /usr/bin/python3 -mpip install pyperformance
     pyston -mpyperformance run -f -p /usr/bin/python3 -o /host-volume-out/cpython_${DIST}.json
     chown -R $(id -u):$(id -g) /host-volume-out/cpython_${DIST}.json
     pyston -mpyperformance compare -O table /host-volume-out/cpython_${DIST}.json /host-volume-out/pyston_${VERSION}_${DIST}.json > /host-volume-out/pyperformance_diff_${DIST}.txt
