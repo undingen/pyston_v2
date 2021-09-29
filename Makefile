@@ -492,15 +492,17 @@ full_bench: $(OPT_BENCH_ENV) $(SYSTEM_BENCH_ENV) $(PYPY_BENCH_ENV)
 	$(MAKE) -C pyston/tools/benchmarks_runner analyze
 
 
-numpy_bc: bc
+NUMPY_BC_STAMP:=build/bc_env/numpy.stamp
+$(NUMPY_BC_STAMP): | build/bc_env/bin/python
 	# generate bitcode
 	build/bc_env/bin/pip install cython
 	#rm -r pyston/numpy/build pyston/numpy/dist || true
 	cd pyston/numpy/; WRAPPER_REALCC=$(realpath $(CLANG)) WRAPPER_OUTPUT_PREFIX=$(abspath build/numpy_bc) CC=$(abspath pyston/clang_wrapper.py) $(abspath build/bc_env/bin/python) setup.py install
 	$(abspath build/bc_env/bin/python) -c "import numpy as np; print(np.ones(5))"
+	touch $(NUMPY_BC_STAMP)
 
 GET_INC_DIR:='import numpy as np; print(np.get_include())'
-build/aot_numpy/aot_numpy_pre_trace.c: numpy_bc pyston/aot/aot_numpy_gen.py build/bc_env/bin/python
+build/aot_numpy/aot_numpy_pre_trace.c: $(NUMPY_BC_STAMP) pyston/aot/aot_numpy_gen.py build/bc_env/bin/python
 	mkdir -p build/aot_numpy
 	cd pyston/aot; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python aot_numpy_gen.py --action=pretrace -o $(abspath $@)
 build/aot_numpy/aot_numpy_pre_trace.bc: build/aot_numpy/aot_numpy_pre_trace.c
@@ -514,7 +516,7 @@ build/aot_numpy/all_numpy.bc: build/bc_build/pyston $(LLVM_TOOLS) build/aot_nump
 build/aot_numpy/aot_numpy_all.bc: build/aot_numpy/aot_numpy_profile.c
 	cd build/aot_numpy; ../Release/llvm/bin/llvm-link aot_module*.bc -o aot_numpy_all.bc
 
-build/aot_numpy/aot_numpy_profile.c: build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/Release/nitrous/libinterp.so build/Release/pystol/libpystol.so
+build/aot_numpy/aot_numpy_profile.c: build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/Release/nitrous/libinterp.so build/Release/pystol/libpystol.so build/aot/all.bc
 	cd build/aot_numpy; rm -f aot_module*.bc
 	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace -v -v
 	cd build/aot_numpy; ls -al aot_module*.bc | wc -l
