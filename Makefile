@@ -509,7 +509,7 @@ build/aot_numpy/aot_numpy_pre_trace.so: build/aot_numpy/aot_numpy_pre_trace.c bu
 	$(CLANG) -O2 -g -fPIC -Wno-incompatible-pointer-types -Wno-int-conversion $< -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/ -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/internal/ -Ipyston/nitrous/ -I$(shell build/bc_env/bin/python -c $(GET_INC_DIR)) -shared -Lbuild/Release/nitrous -linterp -o $@
 
 build/aot_numpy/all_numpy.bc: build/bc_build/pyston $(LLVM_TOOLS) build/aot_numpy/aot_numpy_pre_trace.bc
-	build/Release/llvm/bin/llvm-link $(wildcard build/numpy_bc/build/temp.linux-x86_64-3.8-pyston2.3/numpy/core/src/umath/*.bc) build/aot_numpy/aot_numpy_pre_trace.bc -o=$@
+	build/Release/llvm/bin/llvm-link $(shell find build/numpy_bc/build/ -name "*.bc") build/aot_numpy/aot_numpy_pre_trace.bc -o=$@
 
 build/aot_numpy/aot_numpy_all.bc: build/aot_numpy/aot_numpy_profile.c
 	cd build/aot_numpy; ../Release/llvm/bin/llvm-link aot_module*.bc -o aot_numpy_all.bc

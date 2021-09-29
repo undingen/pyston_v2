@@ -421,6 +421,14 @@ public:
         if (function_name == "builtin_isinstance" || function_name == "builtin_getattr" || function_name == "builtin_len")
             return false;
 
+
+        // Code generator does not support intrinsic function 'llvm.experimental.constrained.sitofp.f64.i32'
+        if (function_name == "DOUBLE_setitem")
+            return false;
+        // LLVM ERROR: Type could not be mapped for use with libffi.
+        if (function_name == "DOUBLE_sqrt") 
+            return false;
+ 
         return true;
     }
 };

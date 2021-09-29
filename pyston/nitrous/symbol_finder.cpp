@@ -96,10 +96,17 @@ StringMap<intptr_t> SymbolFinder::getOffsetsFromFile(llvm::StringRef filename) {
 
         RELEASE_ASSERT(type.size() == 1, "");
 
+        
         intptr_t offset_int = strtoll(offset.c_str(), nullptr, 16);
-        if (addresses.count(name))
-            addresses[name] = MULTIPLY_DEFINED;
-        else
+        /*
+        if (name == "npy_clear_floatstatus_barrier")
+            fprintf(stderr, "npy_clear_floatstatus_barrier %p %d %s\n", 
+            (void*)offset_int, (int)addresses.count(name), filename.str().c_str());
+        */
+        if (0 && addresses.count(name)) {
+            // HACK: allow duplicate syms for now we have several .so which contain same funcs
+            // addresses[name] = MULTIPLY_DEFINED;
+        } else
             addresses[name] = offset_int;
     }
     return addresses;
@@ -113,16 +120,18 @@ void SymbolFinder::addSymbolsFromFile(StringRef filename,
         void* addr = (void*)(p.second + addr_offset);
 
         if (p.second == MULTIPLY_DEFINED
-            || symbol_addresses.count(p.first()))
-            symbol_addresses[p.first()] = (void*)MULTIPLY_DEFINED;
-        else
+            || symbol_addresses.count(p.first())) {
+            // HACK: allow duplicate syms for now we have several .so which contain same funcs
+            //symbol_addresses[p.first()] = (void*)MULTIPLY_DEFINED;
+        } else
             symbol_addresses[p.first()] = addr;
 
         // TODO: could still add these multiply-defined symbols to the reverse map
         if (p.second != MULTIPLY_DEFINED) {
-            if (address_symbols.count(addr))
-                address_symbols[addr] = MULTIPLY_DEFINED_STR;
-            else
+            if (address_symbols.count(addr)) {
+                // HACK: allow duplicate syms for now we have several .so which contain same funcs
+                //address_symbols[addr] = MULTIPLY_DEFINED_STR;
+            } else
                 address_symbols[addr] = p.first();
         }
     }
