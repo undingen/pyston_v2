@@ -222,6 +222,8 @@ bool PystolFactDeriver::deriveFacts(Value* v, FactSet& facts, LLVMEvaluator& eva
                 updateKnowledgeValue(facts[LOCFOR(PyObject, ob_type)],
                     eval.GVToConst(GenericValue((void*)&PyFrame_Type), call->getType()));
             } else if (name == "PyTuple_New" || name == "PyTuple_New_Nonzeroed") {
+                if (!isPyObjectPtr(call->getType()))
+                    outs() << *call << '\n';
                 RELEASE_ASSERT(isPyObjectPtr(call->getType()), "");
 
                 Type* t = call->getType();
