@@ -120,7 +120,6 @@ PyObject* _PyEval_EvalFrame_AOT(PyFrameObject*, int);
 }
 
 bool PystolFactDeriver::deriveFacts(Value* v, FactSet& facts, LLVMEvaluator& eval) {
-    return false; // getting an assert
     bool changed = false;
 
     if (auto fact = getTypeFact(v, facts)) {
