@@ -586,6 +586,10 @@ def loadLibs():
     global aot_pre_trace_so
     aot_pre_trace_so = ctypes.PyDLL("./aot_numpy_pre_trace.so")
 
+    umath = ctypes.PyDLL("/home/kmod/pyston2/build/bc_env/lib/python3.8-pyston2.3/site-packages/numpy-1.22.0.dev0+1258.g26ce52951-py3.8-linux-x86_64.egg/numpy/core/_multiarray_umath.pyston-23-x86_64-linux-gnu.so")
+    assert 0, ctypes.c_void_p.in_dll(umath, "PyUFunc_Type")
+    assert 0, umath.PyUFunc_Type
+
     def makeCType(obj):
         if isinstance(obj, ctypes._SimpleCData):
             return obj

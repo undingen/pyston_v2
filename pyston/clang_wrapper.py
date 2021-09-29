@@ -39,6 +39,7 @@ def main():
 
     # print >>sys.stderr, normal_output, bc_output
 
+    # print(' '.join([cc] + emit_args), file=sys.stderr)
     subprocess.check_call([cc] + emit_args)
     compile_args = ["-O3"]
     if "-fPIC" in args:
