@@ -425,6 +425,8 @@ class CallableHandler(Handler):
         print(
             f"PyObject* {func}Profile(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
         print(
+            f"PyObject* (*{func}numpyProfile_hook)(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
+        print(
             f"PyObject* {func}Profile(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg)", "{", file=profile_f)
         print("PyObject* f = *(stack - oparg - 1);", file=profile_f)
 
@@ -436,6 +438,9 @@ class CallableHandler(Handler):
             print(f"    SET_JIT_AOT_FUNC({name});", file=profile_f)
             print(f"    return {name}(tstate, stack, oparg);", file=profile_f)
             print("}", file=profile_f)
+
+        print(f"  if ({func}numpyProfile_hook) return {func}numpyProfile_hook(tstate, stack, oparg);", file=profile_f)
+        
         print(
             rf'  DBG("Missing {func} %s\n", f->ob_type == &PyType_Type ? ((PyTypeObject*)f)->tp_name : f->ob_type->tp_name);', file=profile_f)
         print(f"  SET_JIT_AOT_FUNC({func});", file=profile_f)

@@ -414,20 +414,20 @@ class CallableHandler(Handler):
     def write_profile_func(self, traced, header_f, profile_f):
         func = self.case.unspecialized_name
         profile_func = self.case.specialized_base + 'Profile'
-        print(f"PyObject* {func}(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
+        print(f"PyObject* {func}Numpy(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
 
         for signature, name in self.case.getSignatures():
             print(
-                f"PyObject* {name}(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
+                f"PyObject* {name}Numpy(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
             print(
-                f"PyObject* {name}(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=profile_f)
+                f"PyObject* {name}Numpy(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=profile_f)
 
         print(
-            f"PyObject* {func}Profile(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
+            f"PyObject* {func}NumpyProfile(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
         print(
             f"PyObject* (*{func}numpyProfile_hook)(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
         print(
-            f"PyObject* {func}Profile(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg)", "{", file=profile_f)
+            f"PyObject* {func}NumpyProfile(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg)", "{", file=profile_f)
         print("PyObject* f = *(stack - oparg - 1);", file=profile_f)
 
         for signature, name in traced:
@@ -439,7 +439,7 @@ class CallableHandler(Handler):
             print(f"    return {name}(tstate, stack, oparg);", file=profile_f)
             print("}", file=profile_f)
 
-        print(f"  if ({func}numpyProfile_hook) return {func}numpyProfile_hook(tstate, stack, oparg);", file=profile_f)
+        #print(f"  if ({func}numpyProfile_hook) return {func}numpyProfile_hook(tstate, stack, oparg);", file=profile_f)
         
         print(
             rf'  DBG("Missing {func} %s\n", f->ob_type == &PyType_Type ? ((PyTypeObject*)f)->tp_name : f->ob_type->tp_name);', file=profile_f)
@@ -486,48 +486,7 @@ class ExampleClass{i}:
     """, globals())
 
 def loadCases():
-    funcs1 = ["PyNumber_Positive",
-              "PyNumber_Negative",
-              "PyNumber_Invert",
-
-              "PyObject_GetIter",
-              ]
-
-    funcs2 = ["PyNumber_Multiply",
-              "PyNumber_MatrixMultiply",
-              "PyNumber_TrueDivide",
-              "PyNumber_FloorDivide",
-              "PyNumber_Remainder",
-              "PyNumber_Add",
-              "PyNumber_Subtract",
-              "PyNumber_Lshift",
-              "PyNumber_Rshift",
-              "PyNumber_And",
-              "PyNumber_Xor",
-              "PyNumber_Or",
-              "PyNumber_InPlaceMultiply",
-              "PyNumber_InPlaceMatrixMultiply",
-              "PyNumber_InPlaceTrueDivide",
-              "PyNumber_InPlaceFloorDivide",
-              "PyNumber_InPlaceRemainder",
-              "PyNumber_InPlaceAdd",
-              "PyNumber_InPlaceSubtract",
-              "PyNumber_InPlaceLshift",
-              "PyNumber_InPlaceRshift",
-              "PyNumber_InPlaceAnd",
-              "PyNumber_InPlaceXor",
-              "PyNumber_InPlaceOr",
-
-              # they are specially made by us because they normally take 3 args and last is always None
-              "PyNumber_PowerNone",
-              "PyNumber_InPlacePowerNone",
-
-              ] + ["cmp_outcome" + cmp for cmp in cmps if "IN" not in cmp]
-
-
-    funcs3_2specialized = [
-                           ]
-
+    import numpy as np
     f = 4.4584
     types = {"Long": (0, 1, 4200, -42222),
              "Float": (f,),
@@ -549,121 +508,13 @@ def loadCases():
         return f"Py{s}_Type"
     type_classes = {k:ObjectClass(k, TypeGuard("&" + getCTypeName(k)), v) for (k, v) in types.items()}
 
-    # look at types.py
-    callables = {"CFunction": [(globals, ()), # zero args
-                               (len, (([1, 2, 3], )), ((1, 2), ), ("test string", )), # one arg
-                               (isinstance, (5, int), (42, str)), # two arg
-                               (getattr, (5, "does not exist", 42))],  # three arg
-             "MethodDescr": [(str.join, (" ", ("a", "b", "c"))), (str.upper, ("hello world",))],
-             # "Method": [("aaa".lower, ())], #[].append),
-             "Function": _function_cases,
-
-             # Types
-             # "Long": [(int, (1,), (1.5,), ("42", ))],
-             "Float": [(float, (1,), (1.5,), ("42.5", ))],
-             "Unicode": [(str, (1,), (1.5,), ("42.5", ))],
-             "Range": [(range, (5,), (100,))],
-             "Bool": [(bool, (1,), (False,))],
-             "Type": [(type, (1,))],
-             "Object": [(object, ())],
-             "Tuple": [(tuple, ([1,2,3], ), ((1,2,3), ))],
-             "List": [(list, ([1,2,3], ), ((1,2,3), ))],
-             "Set": [(set, ([1,2,3], ), ((1,2,3), ))],
-
-             # TODO: e.g.:
-             # super, staticmethod, classmethod, property
-             # what can we do for python classes?
-
-             }
+    callables = {
+        "UFunc": [(np.sqrt, (1337.,))], # one arg
+    }
 
     cases = []
 
     call_signatures = []
-
-    # generate traces for builtin 'isinstance()'
-    # we try to specialice on the 2. argument and generate a special version for tuples with a single fixed type
-    # this are all types where PyType_FastSubclass() checks exist except BaseException
-    for name, example in {  # name: (args to isinstance)
-                            "Long": (1, int),
-                            "List" : ([1], list),
-                            "Tuple": ((1,), tuple),
-                            "Bytes": (bytes(), bytes),
-                            "Unicode": ("str", str),
-                            "Dict": (dict(), dict),
-                            "Type": (int, type),
-                            "": (1.0, float), # non type specialized isinstance case
-                            }.items():
-        def createIsInstanceSignature(name, arg1, arg2):
-            classes = []
-            tuple1element = isinstance(arg2, tuple) and len(arg2) == 1
-            classes.append(ObjectClass("isinstanceT1" if tuple1element else "isinstance", IdentityGuard(f"(PyObject*)&builtin_isinstance_obj"), [isinstance]))
-            # add examples
-            isinstance_true = [arg1]
-            for example in isinstance_true:
-                assert isinstance(example, arg2) == True
-            isinstance_false = [ExampleClass0(), set()]
-            for example in isinstance_false:
-                assert isinstance(example, arg2) == False
-            classes.append(ObjectClass("", Unspecialized, [isinstance_true] + isinstance_false))
-
-            guard_fail_fn_name = "isinstance3"
-            if name and tuple1element: # specialize on isinstance(x, (type,))
-                guard = Tuple1ElementIdentityGuard(f"(PyObject*)&{getCTypeName(name)}")
-            elif name: # specialize on isinstance(x, type)
-                guard = IdentityGuard(f"(PyObject*)&{getCTypeName(name)}")
-            else: # generic
-                guard = Unspecialized
-                guard_fail_fn_name = ""
-            classes.append(ObjectClass(name, guard, [arg2]))
-            return IsInstanceSignature(classes, always_trace=["builtin_isinstance"], guard_fail_fn_name=guard_fail_fn_name)
-
-        call_signatures.append(createIsInstanceSignature(name, example[0], example[1]))
-        if name: # create isinstance(x, (type,)) version
-            call_signatures.append(createIsInstanceSignature(name, example[0], (example[1], )))
-
-
-    def createBuiltinCFunction1ArgSignature(func_name, func, arg1type_name, arg1examples):
-        classes = []
-        classes.append(ObjectClass(func_name, IdentityGuard(f"(PyObject*)&builtin_{func_name}_obj"), [func]))
-
-        if arg1type_name: # specialize on arg->ob_type == arg1type_name
-            guard = TypeGuard(f"&{getCTypeName(arg1type_name)}")
-            guard_fail_fn_name = f"{func_name}2"
-        else: # generic
-            guard = Unspecialized
-            guard_fail_fn_name = ""
-        classes.append(ObjectClass(arg1type_name, guard, arg1examples))
-        return Signature(classes, always_trace=[f"builtin_{func_name}"], guard_fail_fn_name=guard_fail_fn_name)
-
-    def addBuiltinCFunction1ArgSignatures(func_name, func, spec_dict):
-        # Argument type specific versions
-        for name, example in spec_dict.items():
-            call_signatures.append(createBuiltinCFunction1ArgSignature(func_name, func, name, [example]))
-        # Generic non arg type specific version only assuming the function is the same.
-        # Creates a trace supporting all types.
-        # If a type guard inside a type specific version fails we will use this trace.
-        call_signatures.append(createBuiltinCFunction1ArgSignature(func_name, func, "", list(spec_dict.values())))
-
-    # builtin len()
-    len_specs = {
-        "List" : [1],
-        "Tuple": (1,),
-        "ByteArray": bytearray(1),
-        "Bytes": bytes(),
-        "Unicode": "str",
-        "Dict": dict(),
-        "Set": set(),
-    }
-    addBuiltinCFunction1ArgSignatures("len", len, len_specs)
-
-    # builtin ord()
-    ord_specs = {
-        "ByteArray": bytearray(1),
-        "Bytes": b'c',
-        "Unicode": "c",
-    }
-    addBuiltinCFunction1ArgSignatures("ord", ord, ord_specs)
-
     for name, l in callables.items():
         signatures = {}
         for example in l:
@@ -686,54 +537,8 @@ def loadCases():
             else:
                 call_signatures.append(CompoundSignature(sigs))
 
-    for nargs in range(0, 10):
-        ctor_class = ObjectClass("Constructor", TypeGuard(f"&PyType_Type"), [globals()["ExampleClass%d" % nargs]])
-        call_signatures.append(Signature([ctor_class] + [ObjectClass("", Unspecialized, [None])] * nargs))
-
     cases.append(CallableHandler(FunctionCases("call_function_ceval_no_kw", call_signatures)))
     cases.append(CallableHandler(FunctionCases("call_method_ceval_no_kw", call_signatures)))
-
-    def makeSignatures(*args_classes):
-        return [Signature(classes) for classes in itertools.product(*args_classes)]
-    placeholder_class = ObjectClass("", Unspecialized, [(42, "test"), 0])
-
-    for funcs, nargs, nspecialized in [(funcs1, 1, 1), (funcs2, 2, 2), (funcs3_2specialized, 3, 2)]:
-        classes = [type_classes.values()] * nspecialized + [[placeholder_class]] * (nargs - nspecialized)
-
-        signatures = makeSignatures(*classes)
-
-        for func in funcs:
-            cases.append(NormalHandler(FunctionCases(func, signatures)))
-
-    # We currently don't do any specialization on the key argument for GetItem / SetItem / DelItem / IN / NOT_IN
-    # so collapse all those traces into a single one
-
-    getitem_signatures = []
-    for name in "List", "Tuple", "Unicode", "Range":
-        getitem_signatures += makeSignatures([type_classes[name]], [type_classes["Long"], type_classes["Slice"]])
-    getitem_signatures += makeSignatures([type_classes["Dict"]], [placeholder_class])
-    # getitem_signatures = [s for s in getitem_signatures if s.argument_classes[0].name != "Range"]
-    cases.append(NormalHandler(FunctionCases("PyObject_GetItem", getitem_signatures)))
-
-    getitemlong_signatures = []
-    unguarded_int_class = ObjectClass("", AssumedTypeGuard("PyLong_Type"), [0])
-    unguarded_int_class.c_type_name = "PyLongObject*"
-    unguarded_cint_class = CLongClass([ctypes.c_long(0)])
-    for name in "List", "Tuple", "Unicode", "Range":
-        getitemlong_signatures += makeSignatures([type_classes[name]], [unguarded_int_class], [unguarded_cint_class])
-    cases.append(NormalHandler(FunctionCases("PyObject_GetItemLong", getitemlong_signatures), do_not_trace=["PyLong_AsSsize_t"]))
-
-    setitem_signatures = makeSignatures([type_classes["List"]], [type_classes["Long"], type_classes["Slice"]], [placeholder_class])
-    setitem_signatures += makeSignatures([type_classes["Dict"]], [placeholder_class], [placeholder_class])
-    cases.append(NormalHandler(FunctionCases("PyObject_SetItem", setitem_signatures)))
-
-    delitem_signatures = makeSignatures([type_classes["List"]], [type_classes["Long"], type_classes["Slice"]])
-    delitem_signatures += makeSignatures([type_classes["Dict"]], [placeholder_class])
-    cases.append(NormalHandler(FunctionCases("PyObject_DelItem", delitem_signatures)))
-
-    in_signatures = makeSignatures([placeholder_class], type_classes.values())
-    cases.append(NormalHandler(FunctionCases("cmp_outcomePyCmp_IN", in_signatures)))
-    cases.append(NormalHandler(FunctionCases("cmp_outcomePyCmp_NOT_IN", in_signatures)))
 
     return cases
 
@@ -776,7 +581,7 @@ def loadLibs():
     createJitTarget.restype = ctypes.c_void_p
 
     global aot_pre_trace_so
-    aot_pre_trace_so = ctypes.PyDLL("./aot_pre_trace.so")
+    aot_pre_trace_so = ctypes.PyDLL("./aot_numpy_pre_trace.so")
 
     def makeCType(obj):
         if isinstance(obj, ctypes._SimpleCData):
@@ -876,15 +681,15 @@ def trace_all_funcs(only=None):
     if only:
         header_f = profile_f = None
     else:
-        header_f = open("aot.h", "w")
-        profile_f = open("aot_profile.c", "w")
-        print("#ifndef AOT_H_", file=header_f)
-        print("#define AOT_H_", file=header_f)
+        header_f = open("aot_numpy.h", "w")
+        profile_f = open("aot_numpy_profile.c", "w")
+        print("#ifndef AOT_NUMPY_H_", file=header_f)
+        print("#define AOT_NUMPY_H_", file=header_f)
         print('', file=header_f)
 
         print_includes(header_f)
 
-        print('#include "aot.h"', file=profile_f)
+        print('#include "aot_numpy.h"', file=profile_f)
 
         print_helper_funcs(header_f)
 
@@ -913,25 +718,22 @@ def trace_all_funcs(only=None):
 
 def print_includes(f):
     print('#include "Python.h"', file=f)
-    print('#include "opcode.h"', file=f)
+    #print('#include "opcode.h"', file=f)
     print('', file=f)
 
     print('#define likely(x) __builtin_expect(!!(x), 1)', file=f)
     print('#define unlikely(x) __builtin_expect(!!(x), 0)', file=f)
     print('', file=f)
 
-    print('extern PyCFunctionObject builtin_isinstance_obj, builtin_len_obj, builtin_ord_obj;', file=f)
+    #print('extern PyCFunctionObject builtin_isinstance_obj, builtin_len_obj, builtin_ord_obj;', file=f)
+    
+    print('#include "numpy/ndarraytypes.h"', file=f)
+    print('#include "numpy/ufuncobject.h"', file=f)
+    print('#include "numpy/npy_3kcompat.h"', file=f)
 
     print('', file=f)
 
 def print_helper_funcs(f):
-    for func in ("PyNumber_Power", "PyNumber_InPlacePower"):
-        print(f"PyObject* {func}None(PyObject *v, PyObject *w);", file=f)
-
-    print(f"PyObject* cmp_outcome(PyThreadState *tstate, int, PyObject *v, PyObject *w);", file=f)
-    for cmp in cmps:
-        print(f"PyObject* cmp_outcome{cmp}(PyObject *v, PyObject *w);", file=f)
-
     for func in ("call_function_ceval_no_kw", "call_method_ceval_no_kw"):
         print(f"PyObject* {func}(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=f)
 
@@ -1001,7 +803,7 @@ def create_pre_traced_funcs(output_file):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser("aot_gen")
+    parser = argparse.ArgumentParser("aot_numpy_gen")
     parser.add_argument("--action", action="store", default="all")
     parser.add_argument("-v", action="count", default=0, dest="verbosity")
     parser.add_argument("--only", action="store", default=None)
@@ -1022,7 +824,8 @@ if __name__ == "__main__":
         loadLibs()
 
         initializeJIT(VERBOSITY, args.pic)
-        loadBitcode(b'all.bc')
+        loadBitcode(b'../aot/all.bc')
+        loadBitcode(b'all_numpy.bc')
         pystolGlobalPythonSetup()
 
         # start tracing

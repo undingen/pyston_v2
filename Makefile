@@ -490,3 +490,37 @@ bench: $(OPT_BENCH_ENV) $(SYSTEM_BENCH_ENV)
 
 full_bench: $(OPT_BENCH_ENV) $(SYSTEM_BENCH_ENV) $(PYPY_BENCH_ENV)
 	$(MAKE) -C pyston/tools/benchmarks_runner analyze
+
+
+numpy_bc: bc
+	# generate bitcode
+	build/bc_env/bin/pip install cython
+	#rm -r pyston/numpy/build pyston/numpy/dist || true
+	cd pyston/numpy/; WRAPPER_REALCC=$(realpath $(CLANG)) WRAPPER_OUTPUT_PREFIX=$(abspath build/numpy_bc) CC=$(abspath pyston/clang_wrapper.py) $(abspath build/bc_env/bin/python) setup.py install
+	$(abspath build/bc_env/bin/python) -c "import numpy as np; print(np.ones(5))"
+
+GET_INC_DIR:='import numpy as np; print(np.get_include())'
+build/aot_numpy/aot_numpy_pre_trace.c: numpy_bc pyston/aot/aot_numpy_gen.py build/bc_env/bin/python
+	mkdir -p build/aot_numpy
+	cd pyston/aot; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python aot_numpy_gen.py --action=pretrace -o $(abspath $@)
+build/aot_numpy/aot_numpy_pre_trace.bc: build/aot_numpy/aot_numpy_pre_trace.c
+	$(CLANG) -O2 -g -fPIC -Wno-incompatible-pointer-types -Wno-int-conversion $< -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/ -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/internal/ -Ipyston/nitrous/ -I$(shell build/bc_env/bin/python -c $(GET_INC_DIR)) -emit-llvm -c -o $@
+build/aot_numpy/aot_numpy_pre_trace.so: build/aot_numpy/aot_numpy_pre_trace.c build/Release/nitrous/libinterp.so
+	$(CLANG) -O2 -g -fPIC -Wno-incompatible-pointer-types -Wno-int-conversion $< -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/ -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/internal/ -Ipyston/nitrous/ -I$(shell build/bc_env/bin/python -c $(GET_INC_DIR)) -shared -Lbuild/Release/nitrous -linterp -o $@
+
+build/aot_numpy/all_numpy.bc: build/bc_build/pyston $(LLVM_TOOLS) build/aot_numpy/aot_numpy_pre_trace.bc
+	build/Release/llvm/bin/llvm-link $(wildcard build/numpy_bc/*/*.bc) build/aot_numpy/aot_numpy_pre_trace.bc -o=$@
+
+build/aot_numpy/aot_numpy_all.bc: build/aot_numpy/aot_numpy_profile.c
+	cd build/aot_numpy; ../Release/llvm/bin/llvm-link aot_module*.bc -o aot_numpy_all.bc
+
+build/aot_numpy/aot_numpy_profile.c: build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/Release/nitrous/libinterp.so build/Release/pystol/libpystol.so
+	cd build/aot_numpy; rm -f aot_module*.bc
+	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace -v -v
+	cd build/aot_numpy; ls -al aot_module*.bc | wc -l
+
+numpy: bc unopt
+	# generate final numpy install
+	#rm -r pyston/numpy/build pyston/numpy/dist || true
+	cd pyston/numpy; ../../build/unopt_env/bin/python setup.py install
+	$(abspath build/unopt_env/bin/python) -c "import numpy as np; print(np.ones(5))"
