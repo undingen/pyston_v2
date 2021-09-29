@@ -414,13 +414,13 @@ class CallableHandler(Handler):
     def write_profile_func(self, traced, header_f, profile_f):
         func = self.case.unspecialized_name
         profile_func = self.case.specialized_base + 'Profile'
-        print(f"PyObject* {func}Numpy(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
+        print(f"PyObject* {func}(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
 
         for signature, name in self.case.getSignatures():
             print(
-                f"PyObject* {name}Numpy(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
+                f"PyObject* {name}(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
             print(
-                f"PyObject* {name}Numpy(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=profile_f)
+                f"PyObject* {name}(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=profile_f)
 
         print(
             f"PyObject* {func}NumpyProfile(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);", file=header_f)
@@ -435,11 +435,9 @@ class CallableHandler(Handler):
             guard = signature.getGuard(arg_names)
             nargs = signature.nargs
             print(f"  if (oparg == {nargs-1} && {guard})", "{", file=profile_f)
-            print(f"    SET_JIT_AOT_FUNC({name}Numpy);", file=profile_f)
-            print(f"    return {name}Numpy(tstate, stack, oparg);", file=profile_f)
+            print(f"    SET_JIT_AOT_FUNC({name});", file=profile_f)
+            print(f"    return {name}(tstate, stack, oparg);", file=profile_f)
             print("}", file=profile_f)
-
-        #print(f"  if ({func}numpyProfile_hook) return {func}numpyProfile_hook(tstate, stack, oparg);", file=profile_f)
         
         print(
             rf'  DBG("Missing {func}Numpy %s\n", f->ob_type == &PyType_Type ? ((PyTypeObject*)f)->tp_name : f->ob_type->tp_name);', file=profile_f)
@@ -686,6 +684,9 @@ def trace_all_funcs(only=None):
         print("#ifndef AOT_NUMPY_H_", file=header_f)
         print("#define AOT_NUMPY_H_", file=header_f)
         print('', file=header_f)
+
+        print("#define NO_IMPORT_UFUNC", file=header_f)
+        print("#define PY_UFUNC_UNIQUE_SYMBOL numpy_pyston_ufunc", file=header_f)
 
         print_includes(header_f)
 

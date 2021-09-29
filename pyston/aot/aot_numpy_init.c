@@ -1,3 +1,5 @@
+#define PY_UFUNC_UNIQUE_SYMBOL numpy_pyston_ufunc
+
 #include "Python.h"
 #include "numpy/ndarraytypes.h"
 #include "numpy/ufuncobject.h"
