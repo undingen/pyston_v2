@@ -492,15 +492,17 @@ full_bench: $(OPT_BENCH_ENV) $(SYSTEM_BENCH_ENV) $(PYPY_BENCH_ENV)
 	$(MAKE) -C pyston/tools/benchmarks_runner analyze
 
 
-numpy_bc: bc
+NUMPY_BC_STAMP:=build/bc_env/numpy.stamp
+$(NUMPY_BC_STAMP): | build/bc_env/bin/python
 	# generate bitcode
 	build/bc_env/bin/pip install cython
 	#rm -r pyston/numpy/build pyston/numpy/dist || true
 	cd pyston/numpy/; WRAPPER_REALCC=$(realpath $(CLANG)) WRAPPER_OUTPUT_PREFIX=$(abspath build/numpy_bc) CC=$(abspath pyston/clang_wrapper.py) $(abspath build/bc_env/bin/python) setup.py install
 	$(abspath build/bc_env/bin/python) -c "import numpy as np; print(np.ones(5))"
+	touch $(NUMPY_BC_STAMP)
 
 GET_INC_DIR:='import numpy as np; print(np.get_include())'
-build/aot_numpy/aot_numpy_pre_trace.c: numpy_bc pyston/aot/aot_numpy_gen.py build/bc_env/bin/python
+build/aot_numpy/aot_numpy_pre_trace.c: $(NUMPY_BC_STAMP) pyston/aot/aot_numpy_gen.py build/bc_env/bin/python
 	mkdir -p build/aot_numpy
 	cd pyston/aot; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python aot_numpy_gen.py --action=pretrace -o $(abspath $@)
 build/aot_numpy/aot_numpy_pre_trace.bc: build/aot_numpy/aot_numpy_pre_trace.c
