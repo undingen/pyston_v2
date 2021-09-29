@@ -37,3 +37,6 @@
 [submodule "pyston/test/external/pandas"]
 	path = pyston/test/external/pandas
 	url = https://github.com/pandas-dev/pandas
+[submodule "pyston/numpy"]
+	path = pyston/numpy
+	url = git@github.com:undingen/numpy.git
