@@ -1,0 +1,3 @@
+call_method_ceval_no_kw
+ufunc_generic_vectorcall
+ufunc_generic_fastcall

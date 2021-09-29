@@ -351,6 +351,9 @@ class CallableHandler(Handler):
     def __init__(self, case):
         super(CallableHandler, self).__init__(case)
 
+        for l in open(os.path.join(os.path.dirname(__file__), "numpy_trace_functions.txt")):
+            self.always_trace.append(l.strip())
+
         self._jit_targets = {}
 
     def writePretraceFunctions(self, f):

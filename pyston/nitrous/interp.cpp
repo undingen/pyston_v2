@@ -243,6 +243,7 @@ public:
 
         if (always_trace.count(function_name))
             return true;
+        return false;
 
         if (function_name == "PyObject_Malloc")
             return false;
