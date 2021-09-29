@@ -501,8 +501,12 @@ $(NUMPY_BC_STAMP): | build/bc_env/bin/python
 	$(abspath build/bc_env/bin/python) -c "import numpy as np; print(np.ones(5))"
 	touch $(NUMPY_BC_STAMP)
 
+numpy_bc:
+	rm -f $(NUMPY_BC_STAMP)
+	$(MAKE) $(NUMPY_BC_STAMP)
+
 GET_INC_DIR:='import numpy as np; print(np.get_include())'
-build/aot_numpy/aot_numpy_pre_trace.c: $(NUMPY_BC_STAMP) pyston/aot/aot_numpy_gen.py build/bc_env/bin/python
+build/aot_numpy/aot_numpy_pre_trace.c: $(NUMPY_BC_STAMP) build/bc_env/bin/python | pyston/aot/aot_numpy_gen.py
 	mkdir -p build/aot_numpy
 	cd pyston/aot; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python aot_numpy_gen.py --action=pretrace -o $(abspath $@)
 build/aot_numpy/aot_numpy_pre_trace.bc: build/aot_numpy/aot_numpy_pre_trace.c
