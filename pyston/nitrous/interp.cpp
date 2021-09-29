@@ -429,6 +429,14 @@ public:
         // LLVM ERROR: Type could not be mapped for use with libffi.
         if (function_name == "DOUBLE_sqrt") 
             return false;
+
+        if (function_name == "ufunc_generic_fastcall")
+            return false;
+
+
+        if (function_name == "ufunc_generic_vectorcall")
+            return false;
+            
  
         return true;
     }

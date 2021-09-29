@@ -496,7 +496,7 @@ NUMPY_BC_STAMP:=build/bc_env/numpy.stamp
 $(NUMPY_BC_STAMP): | build/bc_env/bin/python
 	# generate bitcode
 	build/bc_env/bin/pip install cython
-	#rm -r pyston/numpy/build pyston/numpy/dist || true
+	rm -r pyston/numpy/build pyston/numpy/dist || true
 	cd pyston/numpy/; WRAPPER_REALCC=$(realpath $(CLANG)) WRAPPER_OUTPUT_PREFIX=$(abspath build/numpy_bc) CC=$(abspath pyston/clang_wrapper.py) $(abspath build/bc_env/bin/python) setup.py install
 	$(abspath build/bc_env/bin/python) -c "import numpy as np; print(np.ones(5))"
 	touch $(NUMPY_BC_STAMP)
@@ -517,20 +517,28 @@ build/aot_numpy/aot_numpy_pre_trace.so: build/aot_numpy/aot_numpy_pre_trace.c bu
 build/aot_numpy/all_numpy.bc: build/bc_build/pyston $(LLVM_TOOLS) build/aot_numpy/aot_numpy_pre_trace.bc
 	build/Release/llvm/bin/llvm-link $(shell find build/numpy_bc/build/ -name "*.bc") build/aot_numpy/aot_numpy_pre_trace.bc build/cpython_bc/Python/ceval.o.bc -o=$@
 
-build/aot_numpy/aot_numpy_all.bc: build/aot_numpy/aot_numpy_profile.c
-	cd build/aot_numpy; ../Release/llvm/bin/llvm-link aot_module*.bc -o aot_numpy_all.bc
+build/aot_numpy/aot_numpy_all.bc: build/aot_numpy/aot_numpy_profile.bc
+	cd build/aot_numpy; ../Release/llvm/bin/llvm-link aot_numpy_profile.bc aot_module*.bc -o aot_numpy_all.bc
+	
+build/aot_numpy/aot_numpy_all.o: build/aot_numpy/aot_numpy_all.bc
+	$(CLANG) -O2 -g -shared -fPIC -c build/aot_numpy/aot_numpy_all.bc -o build/aot_numpy/aot_numpy_all.o
 
 build/aot_numpy/aot_numpy_profile.c: build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/Release/nitrous/libinterp.so build/Release/pystol/libpystol.so pyston/aot/numpy_trace_functions.txt
 	cd build/aot_numpy; rm -f aot_module*.bc
-	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace -v -v
+	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace --pic
 	cd build/aot_numpy; ls -al aot_module*.bc | wc -l
 
 numpy_trace:
 	rm -f build/aot_numpy/aot_numpy_profile.c
 	$(MAKE) build/aot_numpy/aot_numpy_profile.c
 
-numpy: bc unopt
+build/aot_numpy/aot_numpy_profile.bc: build/aot_numpy/aot_numpy_profile.c
+	$(CLANG) -emit-llvm -O2 -g -shared -fPIC -c -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/ -I$(shell build/bc_env/bin/python -c $(GET_INC_DIR)) $< -o$@
+
+numpy: bc unopt build/aot_numpy/aot_numpy_all.o
 	# generate final numpy install
 	#rm -r pyston/numpy/build pyston/numpy/dist || true
 	cd pyston/numpy; ../../build/unopt_env/bin/python setup.py install
-	$(abspath build/unopt_env/bin/python) -c "import numpy as np; print(np.ones(5))"
+	# compile our numpy extension which adds the trace funcs
+	cd pyston/aot; ../../build/unopt_env/bin/python setup.py install
+	JIT_MIN_RUNS=0 $(abspath build/unopt_env/bin/python) -c "import numpy as np; import numpy_pyston; print(np.sqrt(16.))"
