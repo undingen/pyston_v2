@@ -267,6 +267,7 @@ class NormalHandler(Handler):
             for assumption in signature.getAssumptions(arg_names):
                 print(f"  __builtin_assume({assumption});", file=f)
 
+            print(f'''  printf("Calling {name}!\\n");''', file=f)
             print(f"  return {unspecialized_name}({pass_args});", file=f)
             print("}", file=f)
 
@@ -399,6 +400,7 @@ class CallableHandler(Handler):
 
             for line in signature.getSpecialTracingCode(arg_names):
                 print(f"  {line}", file=f)
+            print(f'''  printf("Calling {name}!\\n");''', file=f)
             print(f"  return {self.case.unspecialized_name}(tstate, stack, oparg);", file=f)
             print("}", file=f)
 
