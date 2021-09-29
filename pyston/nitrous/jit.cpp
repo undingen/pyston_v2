@@ -951,6 +951,8 @@ private:
         string real_filename(filename);
         if (filename.startswith("../..")) {
             real_filename = ("build/Release/" + filename).str();
+        } else if (filename.startswith("numpy/")) {
+            real_filename = ("pyston/numpy/" + filename).str();
         }
         if (real_filename[0] != '/')
             real_filename = path_prefix + real_filename;
