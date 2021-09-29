@@ -824,7 +824,6 @@ if __name__ == "__main__":
         loadLibs()
 
         initializeJIT(VERBOSITY, args.pic)
-        loadBitcode(b'../aot/all.bc')
         loadBitcode(b'all_numpy.bc')
         pystolGlobalPythonSetup()
 

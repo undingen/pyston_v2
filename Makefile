@@ -516,10 +516,14 @@ build/aot_numpy/all_numpy.bc: build/bc_build/pyston $(LLVM_TOOLS) build/aot_nump
 build/aot_numpy/aot_numpy_all.bc: build/aot_numpy/aot_numpy_profile.c
 	cd build/aot_numpy; ../Release/llvm/bin/llvm-link aot_module*.bc -o aot_numpy_all.bc
 
-build/aot_numpy/aot_numpy_profile.c: build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/Release/nitrous/libinterp.so build/Release/pystol/libpystol.so build/aot/all.bc
+build/aot_numpy/aot_numpy_profile.c: build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/Release/nitrous/libinterp.so build/Release/pystol/libpystol.so
 	cd build/aot_numpy; rm -f aot_module*.bc
 	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace -v -v
 	cd build/aot_numpy; ls -al aot_module*.bc | wc -l
+
+numpy_trace:
+	rm -f build/aot_numpy/aot_numpy_profile.c
+	$(MAKE) build/aot_numpy/aot_numpy_profile.c
 
 numpy: bc unopt
 	# generate final numpy install
