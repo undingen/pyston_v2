@@ -3,10 +3,31 @@ extern void* call_function_ceval_no_kwnumpyProfile_hook;
 extern void* call_method_ceval_no_kwnumpyProfile_hook;
 
 PyObject* call_function_ceval_no_kwNumpyProfile(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);
+PyObject* call_method_ceval_no_kwNumpyProfile(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);
 
-PyMODINIT_FUNC PyInit_numpy_pyston_init(void) {
-   fprintf(stderr, "PyInit_numpy_pyston_init\n");
-   call_function_ceval_no_kwnumpyProfile_hook = call_function_ceval_no_kwNumpyProfile;
-   Py_RETURN_NONE;
+static struct PyModuleDef moduledef = {
+    PyModuleDef_HEAD_INIT,
+    "numpy_pyston",
+    NULL,
+    -1,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL
+};
+
+
+PyMODINIT_FUNC PyInit_numpy_pyston(void) {
+    fprintf(stderr, "PyInit_numpy_pyston: setting up tracing hook\n");
+
+    PyObject *m = PyModule_Create(&moduledef);
+    if (!m) {
+        return NULL;
+    }
+
+    call_function_ceval_no_kwnumpyProfile_hook = call_function_ceval_no_kwNumpyProfile;
+    call_method_ceval_no_kwnumpyProfile_hook = call_method_ceval_no_kwNumpyProfile;
+    return m;
 }
 
