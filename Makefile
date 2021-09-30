@@ -515,7 +515,7 @@ build/aot_numpy/aot_numpy_pre_trace.c: $(NUMPY_BC_STAMP) build/bc_env/bin/python
 build/aot_numpy/aot_numpy_pre_trace.bc: build/aot_numpy/aot_numpy_pre_trace.c
 	$(CLANG) -O2 -g -fPIC -Wno-incompatible-pointer-types -Wno-int-conversion $< -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/ -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/internal/ -Ipyston/nitrous/ -I$(shell build/bc_env/bin/python -c $(GET_INC_DIR)) -emit-llvm -c -o $@
 build/aot_numpy/aot_numpy_pre_trace.so: build/aot_numpy/aot_numpy_pre_trace.c build/Release/nitrous/libinterp.so
-	$(CLANG) -O2 -g -fPIC -Wno-incompatible-pointer-types -Wno-int-conversion $< -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/ -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/internal/ -Ipyston/nitrous/ -I$(shell build/bc_env/bin/python -c $(GET_INC_DIR)) -shared -Lbuild/Release/nitrous -linterp -o $@
+	$(CLANG) -O2 -g -fPIC -Wno-incompatible-pointer-types -Wno-int-conversion $< -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/ -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/internal/ -Ipyston/nitrous/ -I$(shell build/bc_env/bin/python -c $(GET_INC_DIR)) -shared -Lbuild/Release/nitrous -linterp -o $@ $(abspath $(wildcard build/bc_env/lib/python3.8-pyston2.3/site-packages/numpy-*/numpy/core/_multiarray_umath.pyston-23-x86_64-linux-gnu.so))
 
 build/aot_numpy/all_numpy.bc: build/bc_build/pyston $(LLVM_TOOLS) build/aot_numpy/aot_numpy_pre_trace.bc
 	build/Release/llvm/bin/llvm-link $(shell find build/numpy_bc/build/ -name "*.bc") build/aot_numpy/aot_numpy_pre_trace.bc build/cpython_bc/Python/ceval.o.bc -o=$@
@@ -528,12 +528,17 @@ build/aot_numpy/aot_numpy_all.o: build/aot_numpy/aot_numpy_all.bc
 
 build/aot_numpy/aot_numpy_profile.c: build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/Release/nitrous/libinterp.so build/Release/pystol/libpystol.so pyston/aot/numpy_trace_functions.txt
 	cd build/aot_numpy; rm -f aot_module*.bc
-	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace --pic
+	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/:`pwd`/../../" ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace --pic -v
 	cd build/aot_numpy; ls -al aot_module*.bc | wc -l
 
 numpy_trace:
 	rm -f build/aot_numpy/aot_numpy_profile.c
 	$(MAKE) build/aot_numpy/aot_numpy_profile.c
+
+dbg_numpy_trace: build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/PartialDebug/nitrous/libinterp.so build/PartialDebug/pystol/libpystol.so pyston/aot/numpy_trace_functions.txt
+	cd build/aot_numpy; rm -f aot_module*.bc
+	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../PartialDebug/nitrous/:`pwd`/../PartialDebug/pystol/" gdb --args ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace --pic -v -v -v
+	cd build/aot_numpy; ls -al aot_module*.bc | wc -l
 
 build/aot_numpy/aot_numpy_profile.bc: build/aot_numpy/aot_numpy_profile.c
 	$(CLANG) -emit-llvm -O2 -g -shared -fPIC -c -Ibuild/bc_install/usr/include/python$(PYTHON_MAJOR).$(PYTHON_MINOR)-pyston$(PYSTON_MAJOR).$(PYSTON_MINOR)/ -I$(shell build/bc_env/bin/python -c $(GET_INC_DIR)) $< -o$@

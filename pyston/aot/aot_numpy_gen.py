@@ -2,6 +2,7 @@
 
 import copy
 import ctypes
+import glob
 import itertools
 import multiprocessing.pool
 import os
@@ -543,6 +544,35 @@ def loadCases():
     cases.append(CallableHandler(FunctionCases("call_function_ceval_no_kw", call_signatures)))
     cases.append(CallableHandler(FunctionCases("call_method_ceval_no_kw", call_signatures)))
 
+
+    def createBuiltinCFunction1ArgSignature(obj_name, func, arg1type_name, arg1examples):
+        classes = []
+        classes.append(ObjectClass(obj_name, IdentityGuard(f"(PyObject*){obj_name}"), [func]))
+
+        if arg1type_name: # specialize on arg->ob_type == arg1type_name
+            guard = TypeGuard(f"&{getCTypeName(arg1type_name)}")
+            guard_fail_fn_name = f"{obj_name}2"
+        else: # generic
+            guard = Unspecialized
+            guard_fail_fn_name = ""
+        classes.append(ObjectClass(arg1type_name, guard, arg1examples))
+        return Signature(classes, guard_fail_fn_name=guard_fail_fn_name)
+
+    def addBuiltinCFunction1ArgSignatures(obj_name, func, spec_dict):
+        # Argument type specific versions
+        for name, example in spec_dict.items():
+            call_signatures.append(createBuiltinCFunction1ArgSignature(obj_name, func, name, [example]))
+        # Generic non arg type specific version only assuming the function is the same.
+        # Creates a trace supporting all types.
+        # If a type guard inside a type specific version fails we will use this trace.
+        call_signatures.append(createBuiltinCFunction1ArgSignature(obj_name, func, "", list(spec_dict.values())))
+
+    # builtin len()
+    sqrt_specs = {
+        "Float" : 1.0,
+    }
+    # addBuiltinCFunction1ArgSignatures("numpy_sqrt_ufunc", np.sqrt, sqrt_specs)
+
     return cases
 
 cases = loadCases()
@@ -553,6 +583,10 @@ def loadLibs():
     import ctypes
     nitrous_so = ctypes.PyDLL("libinterp.so")
     pystol_so = ctypes.PyDLL("libpystol.so")
+
+    umath_so = max(glob.glob( "../../build/bc_env/lib/python3.8-pyston2.3/site-packages/numpy-*/numpy/core/_multiarray_umath.pyston-23-x86_64-linux-gnu.so"))
+    umath_so = ctypes.PyDLL(umath_so)
+    print("numpy_sqrt_ufunc:", umath_so.numpy_sqrt_ufunc)
 
     global initializeJIT
     initializeJIT = nitrous_so.initializeJIT
@@ -734,6 +768,8 @@ def print_includes(f):
     print('#define likely(x) __builtin_expect(!!(x), 1)', file=f)
     print('#define unlikely(x) __builtin_expect(!!(x), 0)', file=f)
     print('', file=f)
+
+    print('extern PyObject* numpy_sqrt_ufunc;', file=f)
 
     #print('extern PyCFunctionObject builtin_isinstance_obj, builtin_len_obj, builtin_ord_obj;', file=f)
     
