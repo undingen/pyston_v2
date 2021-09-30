@@ -506,10 +506,7 @@ numpy_bc:
 	$(MAKE) $(NUMPY_BC_STAMP)
 
 GET_INC_DIR:='import numpy as np; print(np.get_include())'
-# TODO: change this back to a non-order-only prereq.
-# I changed it because we're not changing the pretrace functions,
-# so this avoids a link step, but to be safe we should reenable it
-build/aot_numpy/aot_numpy_pre_trace.c: $(NUMPY_BC_STAMP) build/bc_env/bin/python | pyston/aot/aot_numpy_gen.py
+build/aot_numpy/aot_numpy_pre_trace.c: $(NUMPY_BC_STAMP) build/bc_env/bin/python pyston/aot/aot_numpy_gen.py
 	mkdir -p build/aot_numpy
 	cd pyston/aot; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/" ../../build/bc_env/bin/python aot_numpy_gen.py --action=pretrace -o $(abspath $@)
 build/aot_numpy/aot_numpy_pre_trace.bc: build/aot_numpy/aot_numpy_pre_trace.c
