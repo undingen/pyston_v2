@@ -748,25 +748,51 @@ public:
         RELEASE_ASSERT(args.size() == caller.getNumArgOperands(), "this should never happen");
 
         unsigned arg_bytes = 0;
-        SmallVector<ffi_type *, 8> arg_types(args.size());
+        SmallVector<ffi_type *, 8> arg_types;
+        arg_types.reserve(args.size());
         for (int i = 0; i < caller.getNumArgOperands(); ++i) {
             Type* arg_type = caller.getArgOperand(i)->getType();
-            arg_types[i] = ffiTypeFor(arg_type);
-            arg_bytes += data_layout->getTypeStoreSize(arg_type);
+            if (caller.isByValArgument(i)) {
+                RELEASE_ASSERT(arg_type->getTypeID() == Type::PointerTyID, "");
+                auto* struct_type = arg_type->getPointerElementType();
+                RELEASE_ASSERT(struct_type->getTypeID() == Type::StructTyID, "");
+                // we have to pass the elements unpacked one by one
+                for (auto* element_type : ((StructType*)struct_type)->elements()) {
+                    RELEASE_ASSERT(element_type->isPointerTy(), "");
+                    arg_types.push_back(ffiTypeFor(element_type));
+                    arg_bytes += data_layout->getTypeStoreSize(element_type);
+                }
+            } else {
+                arg_types.push_back(ffiTypeFor(arg_type));
+                arg_bytes += data_layout->getTypeStoreSize(arg_type);
+            }
         }
 
         SmallVector<uint8_t, 128> arg_data(arg_bytes);
         uint8_t* arg_data_ptr = arg_data.data();
-        SmallVector<void *, 16> values(args.size());
+        SmallVector<void *, 16> values;
+        values.reserve(args.size());
         for (int i = 0; i < caller.getNumArgOperands(); ++i) {
             Type* arg_type = caller.getArgOperand(i)->getType();
-            values[i] = ffiValueFor(arg_type, args[i], arg_data_ptr);
-            arg_data_ptr += data_layout->getTypeStoreSize(arg_type);
+            if (caller.isByValArgument(i)) {
+                auto* struct_type = arg_type->getPointerElementType();
+                void** ptr = (void**)GVTOP(args[i]);
+                int element_idx = 0;
+                for (auto* element_type : ((StructType*)struct_type)->elements()) {
+                    RELEASE_ASSERT(element_type->isPointerTy(), "");
+                    // we have to pass the elements unpacked one by one
+                    values.push_back(ffiValueFor(element_type, PTOGV(ptr[element_idx++]), arg_data_ptr));
+                    arg_data_ptr += data_layout->getTypeStoreSize(element_type);
+                }
+            } else {
+                values.push_back(ffiValueFor(arg_type, args[i], arg_data_ptr));
+                arg_data_ptr += data_layout->getTypeStoreSize(arg_type);
+            }
         }
 
         Type* ret_type = caller.getType();
         ffi_cif cif;
-        bool r = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, args.size(),
+        bool r = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, arg_types.size(),
                                 ffiTypeFor(ret_type), arg_types.data()) == FFI_OK;
         RELEASE_ASSERT(r, "");
 
