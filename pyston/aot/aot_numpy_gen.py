@@ -513,7 +513,7 @@ def loadCases():
     type_classes = {k:ObjectClass(k, TypeGuard("&" + getCTypeName(k)), v) for (k, v) in types.items()}
 
     callables = {
-        "UFunc": [(np.sqrt, (1337.,))], # one arg
+        # "UFunc": [(np.sqrt, (1337.,))], # one arg
     }
 
     cases = []
@@ -571,7 +571,7 @@ def loadCases():
     sqrt_specs = {
         "Float" : 1.0,
     }
-    # addBuiltinCFunction1ArgSignatures("numpy_sqrt_ufunc", np.sqrt, sqrt_specs)
+    addBuiltinCFunction1ArgSignatures("numpy_sqrt_ufunc", np.sqrt, sqrt_specs)
 
     return cases
 
