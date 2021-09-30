@@ -838,7 +838,11 @@ static void emit_mov_imm2(Jit* Dst, int r_idx1, void* addr1, int r_idx2, void* a
 
 static void emit_call_ext_func(Jit* Dst, void* addr) {
     // WARNING: if you modify this you have to adopt SET_JIT_AOT_FUNC
-    if (IS_32BIT_SIGNED_VAL((long)addr)) {
+    // Disable 32bit offsets for now:
+    // Because our numpy tracing extension is a shared object which will loaded at a random address
+    // which may not be reachable via 32 offset addresses.
+    // We will use a 32bit offset instruction but later patch it to the numpy one which is further away...
+    if (0 && IS_32BIT_SIGNED_VAL((long)addr)) {
         // This emits a relative call. The dynasm syntax is confusing
         // it will not actually take the address of addr (even though it says &addr).
         // Put instead just take the value of addr and calculate the difference to the emitted instruction address. (generated code: dasm_put(Dst, 135, (ptrdiff_t)(addr)))
