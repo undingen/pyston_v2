@@ -497,7 +497,7 @@ $(NUMPY_BC_STAMP): | build/bc_env/bin/python
 	# generate bitcode
 	build/bc_env/bin/pip install cython
 	rm -r pyston/numpy/build pyston/numpy/dist || true
-	cd pyston/numpy/; WRAPPER_REALCC=$(realpath $(CLANG)) WRAPPER_OUTPUT_PREFIX=$(abspath build/numpy_bc) CC=$(abspath pyston/clang_wrapper.py) $(abspath build/bc_env/bin/python) setup.py install
+	cd pyston/numpy/; WRAPPER_REALCC=$(realpath $(CLANG)) WRAPPER_OUTPUT_PREFIX=$(abspath build/numpy_bc) CC=$(abspath pyston/clang_wrapper.py) $(abspath build/bc_env/bin/python) setup.py build -j`nproc` install
 	$(abspath build/bc_env/bin/python) -c "import numpy as np; print(np.ones(5))"
 	touch $(NUMPY_BC_STAMP)
 
@@ -541,7 +541,7 @@ build/aot_numpy/aot_numpy_profile.bc: build/aot_numpy/aot_numpy_profile.c
 numpy: bc unopt build/aot_numpy/aot_numpy_all.o
 	# generate final numpy install
 	#rm -r pyston/numpy/build pyston/numpy/dist || true
-	cd pyston/numpy; ../../build/unopt_env/bin/python setup.py install
+	cd pyston/numpy; ../../build/unopt_env/bin/python setup.py build -j`nproc` install
 	# compile our numpy extension which adds the trace funcs
 	cd pyston/aot; ../../build/unopt_env/bin/python setup.py install
 	JIT_MIN_RUNS=0 $(abspath build/unopt_env/bin/python) -c "import numpy as np; import numpy_pyston; print(np.sqrt(16.))"
