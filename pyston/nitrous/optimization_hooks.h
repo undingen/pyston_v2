@@ -41,7 +41,9 @@ typedef struct _JitConst {
 } JitConst;
 
 void addMallocLikeFunc(const char* name);
+extern "C" {
 void addJitConst(char* addr, int size, int flags);
+}
 void addJitConsts(JitConst* consts, int num_consts);
 
 // If you change this, make sure to update facts.cpp:unionInto and intersectInto

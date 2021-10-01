@@ -268,7 +268,7 @@ class NormalHandler(Handler):
             for assumption in signature.getAssumptions(arg_names):
                 print(f"  __builtin_assume({assumption});", file=f)
 
-            print(f'''  printf("Calling {name}!\\n");''', file=f)
+            #print(f'''  printf("Calling {name}!\\n");''', file=f)
             print(f"  return {unspecialized_name}({pass_args});", file=f)
             print("}", file=f)
 
@@ -401,7 +401,7 @@ class CallableHandler(Handler):
 
             for line in signature.getSpecialTracingCode(arg_names):
                 print(f"  {line}", file=f)
-            print(f'''  printf("Calling {name}!\\n");''', file=f)
+            #print(f'''  printf("Calling {name}!\\n");''', file=f)
             print(f"  return {self.case.unspecialized_name}(tstate, stack, oparg);", file=f)
             print("}", file=f)
 
@@ -547,7 +547,7 @@ def loadCases():
 
     def createBuiltinCFunction1ArgSignature(obj_name, func, arg1type_name, arg1examples):
         classes = []
-        classes.append(ObjectClass(obj_name, IdentityGuard(f"(PyObject*){obj_name}"), [func]))
+        classes.append(ObjectClass(obj_name, IdentityGuard(f"(PyObject*)&{obj_name}"), [func]))
 
         if arg1type_name: # specialize on arg->ob_type == arg1type_name
             guard = TypeGuard(f"&{getCTypeName(arg1type_name)}")
@@ -581,6 +581,7 @@ def loadLibs():
     # TODO we should probably export a python module instead
     # say that its a pylib because otherwise we will release the gil and we can't access python object
     import ctypes
+    global nitrous_so, umath_so, pystol_so
     nitrous_so = ctypes.PyDLL("libinterp.so")
     pystol_so = ctypes.PyDLL("libpystol.so")
 
@@ -769,13 +770,15 @@ def print_includes(f):
     print('#define unlikely(x) __builtin_expect(!!(x), 0)', file=f)
     print('', file=f)
 
-    print('extern PyObject* numpy_sqrt_ufunc;', file=f)
+    
 
     #print('extern PyCFunctionObject builtin_isinstance_obj, builtin_len_obj, builtin_ord_obj;', file=f)
     
     print('#include "numpy/ndarraytypes.h"', file=f)
     print('#include "numpy/ufuncobject.h"', file=f)
     print('#include "numpy/npy_3kcompat.h"', file=f)
+
+    print('extern PyUFuncObject numpy_sqrt_ufunc;', file=f)
 
     print('', file=f)
 
@@ -844,8 +847,24 @@ def create_pre_traced_funcs(output_file):
                 print(f'  return {ret};', file=f)
                 print('}', file=f)
 
+        print("""
+        void markSqrtConst(void (*pystolAddConstType)(void*), void (*addJitConst)(char* addr, int size, int flags)) {
+            pystolAddConstType(&PyUFunc_Type);
+            int offset = offsetof(PyObject, ob_type); /* skip refcount */
+            #define JIT_IS_CONST    (1<<0)
+            #define JIT_NOT_ZERO    (1<<1)
+            #define MARKCONST(ptr, size) addJitConst((char*)(ptr), (size), JIT_IS_CONST)
+            #define MARKNOTZERO(ptr, size) addJitConst((char*)(ptr), (size), JIT_NOT_ZERO)
+            MARKNOTZERO((char*)&numpy_sqrt_ufunc, offset); /* refcount is never zero but not const! */
+            //MARKCONST(((char*)&numpy_sqrt_ufunc) + offset, sizeof(PyObject) - offset);
+            // HACK this is marking all fields const but they are not all const...
+            MARKCONST(((char*)&numpy_sqrt_ufunc) + offset, sizeof(PyUFuncObject) - offset);
+        }
+        """, file=f)
+
         for case in cases:
             case.writePretraceFunctions(f)
+
 
 if __name__ == "__main__":
     import argparse
@@ -872,6 +891,9 @@ if __name__ == "__main__":
         initializeJIT(VERBOSITY, args.pic)
         loadBitcode(b'all_numpy.bc')
         pystolGlobalPythonSetup()
+
+        aot_pre_trace_so.markSqrtConst.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        aot_pre_trace_so.markSqrtConst(pystol_so.pystolAddConstType, nitrous_so.addJitConst)
 
         # start tracing
         trace_all_funcs(only=args.only)

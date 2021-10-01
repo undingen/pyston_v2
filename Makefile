@@ -525,14 +525,14 @@ build/aot_numpy/aot_numpy_all.o: build/aot_numpy/aot_numpy_all.bc
 
 build/aot_numpy/aot_numpy_profile.c: build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/Release/nitrous/libinterp.so build/Release/pystol/libpystol.so pyston/aot/numpy_trace_functions.txt
 	cd build/aot_numpy; rm -f aot_module*.bc
-	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/:`pwd`/../../" ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace --pic -v
+	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../Release/nitrous/:`pwd`/../Release/pystol/:`pwd`/../../" ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace --pic -v -v
 	cd build/aot_numpy; ls -al aot_module*.bc | wc -l
 
 numpy_trace:
 	rm -f build/aot_numpy/aot_numpy_profile.c
 	$(MAKE) build/aot_numpy/aot_numpy_profile.c
 
-dbg_numpy_trace: build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/PartialDebug/nitrous/libinterp.so build/PartialDebug/pystol/libpystol.so pyston/aot/numpy_trace_functions.txt
+dbg_numpy_trace: build_dbg build/aot_numpy/all_numpy.bc build/aot_numpy/aot_numpy_pre_trace.so build/bc_env/bin/python pyston/aot/aot_numpy_gen.py build/PartialDebug/nitrous/libinterp.so build/PartialDebug/pystol/libpystol.so pyston/aot/numpy_trace_functions.txt
 	cd build/aot_numpy; rm -f aot_module*.bc
 	cd build/aot_numpy; LD_LIBRARY_PATH="`pwd`/../PartialDebug/nitrous/:`pwd`/../PartialDebug/pystol/" gdb --args ../../build/bc_env/bin/python ../../pyston/aot/aot_numpy_gen.py --action=trace --pic -v -v -v
 	cd build/aot_numpy; ls -al aot_module*.bc | wc -l
