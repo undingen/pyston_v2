@@ -13,14 +13,22 @@ mkdir -p ${OUTPUT_DIR}
 
 docker run -iv${PWD}:/pyston_dir:ro -v${OUTPUT_DIR}:/conda_pkgs continuumio/miniconda3 sh -s <<EOF
 set -eux
-conda install conda-build -y
-conda build pyston_dir/pyston/conda/compiler-rt
-conda build pyston_dir/pyston/conda/bolt
-conda build pyston_dir/pyston/conda/pyston
-conda build pyston_dir/pyston/conda/python_abi
-conda build pyston_dir/pyston/conda/python
 
-conda install patch -y # required to apply the patches in some recipes
+apt-get update
+# These packages are needed for running the uwsgi test suite (psmisc for killall).
+# curl can also be installed via --extra-deps, but I couldn't find a package with killall
+apt-get install psmisc curl
+
+conda install conda-build -y
+# In case you want to use the results from a previous run:
+conda index /conda_pkgs
+conda build pyston_dir/pyston/conda/compiler-rt -c /conda_pkgs -c conda-forge --override-channels
+conda build pyston_dir/pyston/conda/bolt -c /conda_pkgs -c conda-forge --override-channels
+conda build pyston_dir/pyston/conda/pyston -c /conda_pkgs -c /conda_pkgs -c conda-forge --override-channels
+conda build pyston_dir/pyston/conda/python_abi -c /conda_pkgs -c conda-forge --override-channels
+conda build pyston_dir/pyston/conda/python -c /conda_pkgs -c conda-forge --override-channels
+
+conda install patch -y -c /conda_pkgs -c conda-forge --override-channels # required to apply the patches in some recipes
 
 # This are the arch dependent pip dependencies. 
 # We set CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 to prevent the implicit dependency on pip when specifying python.
@@ -35,6 +43,9 @@ git clone https://github.com/AnacondaRecipes/numpy-feedstock.git -b pbs_1.20.3_2
 # 'test_for_reference_leak' fails for pyston - disable it
 sed -i 's/_not_a_real_test/test_for_reference_leak/g' numpy-feedstock/recipe/meta.yaml
 conda build numpy-feedstock/ --python="${PYSTON_PKG_VER}" --override-channels -c conda-forge --use-local --extra-deps pyston --variants="{blas_impl: openblas, openblas: 0.3.3, c_compiler_version: 7.5.0, cxx_compiler_version: 7.5.0}"
+
+git clone https://github.com/AnacondaRecipes/uwsgi-feedstock.git
+conda build uwsgi-feedstock/ --python="${PYSTON_PKG_VER}" --override-channels -c conda-forge --use-local --extra-deps pyston
 
 for arch in noarch linux-64
 do
