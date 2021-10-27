@@ -6,34 +6,35 @@
 {% set python_version2 = ".".join(python_version.split(".")[:2]) %}
 
 package:
-  name: pyston{{ pyston_version2 }}
+  name: pyston{{ pyston_version2 }}-split
   version: {{ pyston_version }}
   skip: True  # [not linux]
 
 source:
   path: ../../../
 
-build:
-  number: {{ build_num }}
-
-  # don't compile python code for now
-  skip_compile_pyc:
-    "*.py"
-
-  script_env:
-    - PYSTON_VERSION2={{ pyston_version2 }}
-    - PYTHON_VERSION2={{ python_version2 }}
-
-  always_include_files:
-    # this directory is already created by our build requirement on 'python' so will not get bundled automatically
-    # but we want the pyston package to create it too so force package our README.txt.
-    - lib/python{{ python_version2 }}/site-packages/README.txt
-
-  detect_binary_files_with_prefix: true
-
 outputs:
   - name: pyston{{ pyston_version2 }}
     script: build_base.sh
+
+    build:
+      number: {{ build_num }}
+
+      # don't compile python code for now
+      skip_compile_pyc:
+        "*.py"
+
+      script_env:
+        - PYSTON_VERSION2={{ pyston_version2 }}
+        - PYTHON_VERSION2={{ python_version2 }}
+
+      always_include_files:
+        # this directory is already created by our build requirement on 'python' so will not get bundled automatically
+        # but we want the pyston package to create it too so force package our README.txt.
+        - lib/python{{ python_version2 }}/site-packages/README.txt
+
+      detect_binary_files_with_prefix: true
+
 
     requirements:
       build:
@@ -54,6 +55,7 @@ outputs:
         - sqlite
         - luajit
         - bolt==2.3.1 *_pyston
+        - zlib
 
         # nitrous needs 'nm'
         - binutils 
@@ -84,7 +86,26 @@ outputs:
         - tzdata
       
       run_constrained:
-        python {{ python_version }} *_{{ pyston_version2.replace('.', '') }}_pyston
+        - python {{ python_version }} *_{{ pyston_version2.replace('.', '') }}_pyston
+
+  - name: libpython-static
+    script: build_static.sh
+    version: {{ python_version }}
+
+    build:
+      string: h{{ PKG_HASH }}_{{ PKG_BUILDNUM }}_pyston
+      script_env:
+        - PYSTON_VERSION2={{ pyston_version2 }}
+        - PYTHON_VERSION2={{ python_version2 }}
+
+    requirements:
+      build:
+        - {{ compiler('c') }}
+        - {{ compiler('cxx') }}
+      host:
+        - {{ pin_subpackage('pyston' + pyston_version2, exact=True) }}
+      run:
+        - {{ pin_subpackage('pyston' + pyston_version2, exact=True) }}
 
 test:
   commands:
