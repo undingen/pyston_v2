@@ -23,6 +23,22 @@ CPPFLAGS=${CPPFLAGS}" -I${PREFIX}/include"
 
 rm -rf build
 
+# This causes setup.py to query the sysroot directories from the compiler, something which
+# IMHO should be done by default anyway with a flag to disable it to workaround broken ones.
+# Technically, setting _PYTHON_HOST_PLATFORM causes setup.py to consider it cross_compiling
+if [[ -n ${HOST} ]]; then
+  if [[ ${HOST} =~ .*darwin.* ]]; then
+    # Even if BUILD is .*darwin.* you get better isolation by cross_compiling (no /usr/local)
+    IFS='-' read -r host_arch host_os host_kernel <<<"${HOST}"
+    export _PYTHON_HOST_PLATFORM=darwin-${host_arch}
+  else
+    IFS='-' read -r host_arch host_vendor host_os host_libc <<<"${HOST}"
+    export _PYTHON_HOST_PLATFORM=${host_os}-${host_arch}
+  fi
+fi
+export CONFIGURE_EXTRA_FLAGS="--build=${BUILD} --host=${HOST}"
+
+
 if [ "${PYSTON_UNOPT_BUILD}" = "1" ]; then
     make -j`nproc` unopt
     make -j`nproc` cpython_testsuite
