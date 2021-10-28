@@ -22,9 +22,6 @@ jobs:
       - name: checkout submodules
         run: |
           git submodule update --init pyston/LuaJIT pyston/macrobenchmarks
-      - name: remove system includes
-        run: |
-          sudo mv -f /usr/include /usr/_include
       - name: fix ACL to make cpython tests pass
         run: |
           sudo setfacl -Rb /home/ /usr/share/miniconda/

@@ -105,6 +105,7 @@ class TestSysConfig(unittest.TestCase):
         self.assertIsInstance(cvars, dict)
         self.assertTrue(cvars)
 
+    @unittest.skipIf("_PYTHON_HOST_PLATFORM" in os.environ, 'get_platform() is overwritten by this variable')
     def test_get_platform(self):
         # windows XP, 32bits
         os.name = 'nt'
