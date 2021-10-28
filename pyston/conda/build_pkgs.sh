@@ -1,6 +1,8 @@
 #!/bin/bash
 set -eux
 
+USE_UPLOADED=1
+
 PYSTON_PKG_VER="3.8.12 *_23_pyston"
 OUTPUT_DIR=${PWD}/release/conda_pkgs
 
@@ -14,9 +16,9 @@ mkdir -p ${OUTPUT_DIR}
 docker run -iv${PWD}:/pyston_dir:ro -v${OUTPUT_DIR}:/conda_pkgs continuumio/miniconda3 sh -s <<EOF
 set -eux
 conda install conda-build -y
-conda build pyston_dir/pyston/conda/compiler-rt
-conda build pyston_dir/pyston/conda/bolt
-conda build pyston_dir/pyston/conda/pyston
+#conda build pyston_dir/pyston/conda/compiler-rt
+#conda build pyston_dir/pyston/conda/bolt
+conda build pyston_dir/pyston/conda/pyston -c pyston/label/dev
 conda build pyston_dir/pyston/conda/python_abi
 conda build pyston_dir/pyston/conda/python
 

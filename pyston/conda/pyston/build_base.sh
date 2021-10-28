@@ -36,8 +36,8 @@ if [[ -n ${HOST} ]]; then
     export _PYTHON_HOST_PLATFORM=${host_os}-${host_arch}
   fi
 fi
-export CONFIGURE_EXTRA_FLAGS="--build=${BUILD} --host=${HOST}"
-
+#export CONFIGURE_EXTRA_FLAGS='--build=${BUILD} --host=${HOST} --enable-ipv6 --with-tzpath=${PREFIX}/share/zoneinfo --with-system-ffi --enable-loadable-sqlite-extensions --with-tcltk-includes="-I${PREFIX}/include" --with-tcltk-libs="-L${PREFIX}/lib -ltcl8.6 -ltk8.6" --with-platlibdir=lib'
+CONFIGURE_EXTRA_FLAGS='--build=${BUILD} --host=${HOST} --with-tzpath=${PREFIX}/share/zoneinfo --with-system-ffi --enable-loadable-sqlite-extensions --with-tcltk-includes="-I${PREFIX}/include" --with-tcltk-libs="-L${PREFIX}/lib -ltcl8.6 -ltk8.6" --with-platlibdir=lib'
 
 if [ "${PYSTON_UNOPT_BUILD}" = "1" ]; then
     make -j`nproc` unopt
