@@ -47,14 +47,14 @@ idna
 cython
 asn1crypto
 nose
-mkl-service  # [not ppc]
+mkl-service
 openblas
-intel_repack  # [not ppc]
+intel_repack
 numpy-1.9
 numpy-1.11
-mkl_fft  # [not ppc]
+mkl_fft
 numpy
-mkl_random  # [not ppc]
+mkl_random
 numpy
 flaky
 text-unidecode
@@ -266,12 +266,12 @@ pillow
 imageio
 kiwisolver
 cycler
-sip  # [not ppc]
-qt  # [not ppc]
-pyqt  # [not ppc]
-sip-4.18  # [not ppc]
-qt-5.6  # [not ppc]
-pyqt-5.6  # [not ppc]
+sip
+qt
+pyqt
+sip-4.18
+qt-5.6
+pyqt-5.6
 freetype
 matplotlib
 pywavelets
@@ -316,7 +316,7 @@ conda-verify
 pkginfo
 glob2
 patchelf
-lief  # [not win]
+lief
 conda-build
 configargparse
 console_shortcut
@@ -354,7 +354,6 @@ pytest-benchmark
 statistics
 dbf
 descartes
-pyreadline  # [win]
 dill
 distlib
 psycopg2
@@ -366,9 +365,9 @@ doit
 drmaa
 elasticsearch
 elasticsearch-dsl
-qtpy  # [not ppc]
+qtpy
 ply
-enaml  # [not ppc]
+enaml
 configobj
 traits
 pyface
@@ -431,13 +430,13 @@ gevent
 smmap2
 gitdb2
 gitpython
-qtconsole  # [not ppc]
+qtconsole
 fast-histogram
 mpl-scatter-density
 scikit-image
-glue-core  # [not ppc]
+glue-core
 pyopengl
-glue-vispy-viewers  # [not ppc]
+glue-vispy-viewers
 gmpy2
 gobject-introspection
 grin
@@ -503,8 +502,8 @@ mysqlclient
 natsort
 nb_conda_kernels
 nb_conda
-nbpresent  # [not ppc]
-nbserverproxy  # [not ppc]
+nbpresent
+nbserverproxy
 ndg-httpsclient
 neotime
 neo4j-python-driver
@@ -514,11 +513,11 @@ nltk
 opentracing
 opentracing_instrumentation
 serverfiles
-anyqt  # [not ppc]
-pyqtgraph  # [not ppc]
+anyqt
+pyqtgraph
 networkx-1.11
 joblib
-orange3  # [not ppc]
+orange3
 requests-file
 requests-ftp
 pandas-datareader
@@ -556,11 +555,9 @@ libgpuarray
 pygpu
 pygraphviz
 sasl
-pure-sasl  # [win]
 thrift_sasl
 pyhive
 pyjwt
-winkerberos  # [win]
 pykerberos
 isort
 pylint
@@ -609,7 +606,7 @@ python-snappy
 pyutilib
 pywget
 qgrid
-qtawesome  # [not ppc]
+qtawesome
 inflection
 quandl
 queuelib
@@ -640,8 +637,8 @@ ujson
 spacy
 sparkmagic
 sphinx_rtd_theme
-spyder-kernels-0.2.4  # [not ppc]
-spyder  # [not ppc]
+spyder-kernels-0.2.4
+spyder
 sqlalchemy-utils
 sqlparse
 ssl_match_hostname
@@ -665,8 +662,8 @@ webtest
 whisper
 word2vec
 ws4py
-wxpython  # [not ppc]
-xcb-proto  # [not win]
+wxpython
+xcb-proto
 xlsxwriter
 xlwt
 xlwings
