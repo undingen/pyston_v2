@@ -1,0 +1,19 @@
+name: Build conda packages
+on: [push, pull_request]
+jobs:
+  build_pkgs:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: checkout submodules
+        run: |
+          git submodule update --init pyston/LuaJIT pyston/macrobenchmarks
+      - name: build packages
+        run: |
+          pyston/conda/build_pkgs.sh
+      - name: Archive packages
+        uses: actions/upload-artifact@v2
+        with:
+          name: packages
+          path: |
+            release/conda_pkgs/
