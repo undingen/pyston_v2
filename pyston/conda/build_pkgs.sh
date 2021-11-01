@@ -17,7 +17,7 @@ set -eux
 apt-get update
 # These packages are needed for running the uwsgi test suite (psmisc for killall).
 # curl can also be installed via --extra-deps, but I couldn't find a package with killall
-apt-get install psmisc curl
+apt-get install -y psmisc curl
 
 conda install conda-build -y
 # In case you want to use the results from a previous run:
@@ -31,9 +31,10 @@ CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 conda build pyston_dir/pyston/conda/python 
 conda install patch -y -c /conda_pkgs -c conda-forge --override-channels # required to apply the patches in some recipes
 
 # This are the arch dependent pip dependencies. 
-for pkg in certifi setuptools uwsgi cryptography brotlipy cffi pysocks
+for pkg in certifi setuptools
 do
-    pyston_dir/pyston/conda/build_feedstock.sh \${pkg}
+    git clone https://github.com/conda-forge/\${pkg}-feedstock.git
+    CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 conda build \${pkg}-feedstock/recipe --python="${PYSTON_PKG_VER}" --override-channels -c /conda_pkgs -c conda-forge --use-local
 done
 
 # build numpy 1.20.3 using openblas
@@ -44,7 +45,7 @@ conda build numpy-feedstock/ --python="${PYSTON_PKG_VER}" --override-channels -c
 
 for arch in noarch linux-64
 do
-    mkdir /conda_pkgs/\${arch}
+    mkdir -p /conda_pkgs/\${arch}
     cp /opt/conda/conda-bld/\${arch}/*.tar.bz2 /conda_pkgs/\${arch}
 done
 chown -R $(id -u):$(id -g) /conda_pkgs/
