@@ -22,5 +22,12 @@ if ! grep -q EXTRA_CB_OPTIONS .scripts/build_steps.sh; then
     conda-smithy rerender
 fi
 
+if [ "$PACKAGE" == "python-rapidjson" ]; then
+    sed -i 's/pytest tests/pytest tests --ignore=tests\/test_memory_leaks.py --ignore=tests\/test_circular.py/g' recipe/meta.yaml
+fi
+if [ "$PACKAGE" == "numpy" ]; then
+    sed -i 's/_not_a_real_test/test_for_reference_leak/g' recipe/meta.yaml
+fi
+
 # conda-forge-ci-setup automatically sets add_pip_as_python_dependency=false
 CONDA_FORGE_DOCKER_RUN_ARGS="-e EXTRA_CB_OPTIONS" EXTRA_CB_OPTIONS="-c $CHANNEL" python3 build-locally.py $(python3 $MAKE_CONFIG_PY)
