@@ -24,7 +24,7 @@ conda install conda-build -y
 conda index /conda_pkgs
 # CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 conda build pyston_dir/pyston/conda/compiler-rt -c /conda_pkgs -c conda-forge --override-channels
 # CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 conda build pyston_dir/pyston/conda/bolt -c /conda_pkgs -c conda-forge --override-channels
-CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 conda build pyston_dir/pyston/conda/pyston -c /conda_pkgs -c /conda_pkgs -c conda-forge --override-channels
+CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 conda build pyston_dir/pyston/conda/pyston -c /conda_pkgs -c /conda_pkgs -c conda-forge --override-channels -m pyston_dir/pyston/conda/pyston/variants.yaml
 CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 conda build pyston_dir/pyston/conda/python_abi -c /conda_pkgs -c conda-forge --override-channels
 CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 conda build pyston_dir/pyston/conda/python -c /conda_pkgs -c conda-forge --override-channels
 

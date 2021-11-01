@@ -65,7 +65,7 @@ outputs:
         - sqlite
         - xz
         - zlib
-        - openssl=1.1.1
+        - openssl
         - readline  # [not win]
         - tk
         - ncurses  # [unix]
