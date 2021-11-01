@@ -20,6 +20,8 @@ def main():
 
     given_substr = os.environ.get("BASE_CONFIG", "")
 
+    cwd = os.getcwd()
+
     for c in configs:
         if "aarch64" in c or "ppc" in c:
             continue
@@ -33,6 +35,9 @@ def main():
             continue
 
         if "pyston" in c:
+            continue
+
+        if "numpy" in cwd and "mkl" not in c:
             continue
 
         possible_configs.append(c)
