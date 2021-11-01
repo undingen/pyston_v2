@@ -1,0 +1,14 @@
+cffi
+cryptography
+cython
+uwsgi
+python-rapidjson
+idna_ssl
+multidict
+yarl
+aiohttp
+Pillow
+numpy
+scipy
+scikit-learn
+pandas

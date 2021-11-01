@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -euxo pipefail
+set -exo pipefail
 
 PACKAGE=$1
 PYSTON_PKG_VER="3.8.12 *_23_pyston"
