@@ -23,6 +23,11 @@ CPPFLAGS=${CPPFLAGS}" -I${PREFIX}/include"
 
 rm -rf build
 
+which clang
+clang -E -v - </dev/null
+CC=$(basename "${GCC}") -E -v - </dev/null
+
+
 # This causes setup.py to query the sysroot directories from the compiler, something which
 # IMHO should be done by default anyway with a flag to disable it to workaround broken ones.
 # Technically, setting _PYTHON_HOST_PLATFORM causes setup.py to consider it cross_compiling
