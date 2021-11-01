@@ -568,6 +568,8 @@ class PyBuildExt(build_ext):
         tmpfile = os.path.join(self.build_temp, 'multiarch')
         if not os.path.exists(self.build_temp):
             os.makedirs(self.build_temp)
+        print("PYSTONDBG ", 'dpkg-architecture %s -qDEB_HOST_MULTIARCH > %s 2> /dev/null' %
+            (opt, tmpfile), file=sys.stderr)
         ret = os.system(
             'dpkg-architecture %s -qDEB_HOST_MULTIARCH > %s 2> /dev/null' %
             (opt, tmpfile))
@@ -575,6 +577,7 @@ class PyBuildExt(build_ext):
             if ret >> 8 == 0:
                 with open(tmpfile) as fp:
                     multiarch_path_component = fp.readline().strip()
+                print("PYSTONDBG multiarch_path_component", multiarch_path_component, file=sys.stderr)
                 add_dir_to_list(self.compiler.library_dirs,
                                 '/usr/lib/' + multiarch_path_component)
                 add_dir_to_list(self.compiler.include_dirs,
