@@ -550,6 +550,9 @@ class PyBuildExt(build_ext):
         finally:
             os.unlink(tmpfile)
 
+        print("PYSTONDBG multiarch_path_component ", multiarch_path_component, file=sys.stderr)
+        print("PYSTONDBG self.compiler.include_dirs ", self.compiler.include_dirs, file=sys.stderr)
+
         if multiarch_path_component != '':
             add_dir_to_list(self.compiler.library_dirs,
                             '/usr/lib/' + multiarch_path_component)
