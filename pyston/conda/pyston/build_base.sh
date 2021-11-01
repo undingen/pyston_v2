@@ -25,7 +25,7 @@ rm -rf build
 
 which clang
 clang -E -v - </dev/null
-CC=$(basename "${GCC}") -E -v - </dev/null
+$CC -E -v - </dev/null
 
 
 # This causes setup.py to query the sysroot directories from the compiler, something which

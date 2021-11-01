@@ -35,6 +35,9 @@ def main():
     else:
         raise Exception("couldn't determine output file")
 
+    if "/usr/local/include" in args:
+        raise Exception("/usr/local/include " + args)
+
     os.makedirs(os.path.dirname(bc_output), exist_ok=True)
 
     # print >>sys.stderr, normal_output, bc_output
