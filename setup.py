@@ -98,8 +98,10 @@ def add_dir_to_list(dirlist, dir):
     for i, path in enumerate(dirlist):
         if not os.path.isabs(path):
             dirlist.insert(i + 1, dir)
+            print("PYSTONDBG adding ", dir, file=sys.stderr)
             return
     dirlist.insert(0, dir)
+    print("PYSTONDBG adding ", dir, file=sys.stderr)
 
 
 def sysroot_paths(make_vars, subdirs):
@@ -531,6 +533,7 @@ class PyBuildExt(build_ext):
             self.failed.append(ext.name)
 
     def add_multiarch_paths(self):
+        print("PYSTONDBG add_multiarch_paths ", file=sys.stderr)
         # Debian/Ubuntu multiarch support.
         # https://wiki.ubuntu.com/MultiarchSpec
         cc = sysconfig.get_config_var('CC')
@@ -577,6 +580,7 @@ class PyBuildExt(build_ext):
             os.unlink(tmpfile)
 
     def add_cross_compiling_paths(self):
+        print("PYSTONDBG add_cross_compiling_paths ", file=sys.stderr)
         cc = sysconfig.get_config_var('CC')
         tmpfile = os.path.join(self.build_temp, 'ccpaths')
         if not os.path.exists(self.build_temp):
@@ -633,6 +637,9 @@ class PyBuildExt(build_ext):
         # Ensure that /usr/local is always used, but the local build
         # directories (i.e. '.' and 'Include') must be first.  See issue
         # 10520.
+        print("PYSTONDBG configure_compiler", CROSS_COMPILING, file=sys.stderr)
+        print("PYSTONDBG self.compiler.library_dirs", self.compiler.library_dirs, file=sys.stderr)
+        print("PYSTONDBG self.compiler.include_dirs", self.compiler.library_dirs, file=sys.stderr)
         if not CROSS_COMPILING:
             add_dir_to_list(self.compiler.library_dirs, '/usr/local/lib')
             add_dir_to_list(self.compiler.include_dirs, '/usr/local/include')
