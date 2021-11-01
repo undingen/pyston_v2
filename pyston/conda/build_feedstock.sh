@@ -12,7 +12,7 @@ fi
 MAKE_CONFIG_PY=$(realpath $(dirname $0)/make_config.py)
 
 if [ ! -d ${PACKAGE}-feedstock ]; then
-    git clone https://github.com/AnacondaRecipes/${PACKAGE}-feedstock.git
+    git clone https://github.com/conda-forge/${PACKAGE}-feedstock.git
 fi
 # CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 conda build ${PACKAGE}-feedstock/recipe --python="${PYSTON_PKG_VER}" --override-channels -c conda-forge --use-local -c /conda_pkgs
 cd ${PACKAGE}-feedstock
