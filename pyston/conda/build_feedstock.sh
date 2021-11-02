@@ -21,6 +21,9 @@ cd ${PACKAGE}-feedstock
 if ! grep -q EXTRA_CB_OPTIONS .scripts/build_steps.sh; then
     conda-smithy rerender
 fi
+if ! grep -q mambabuild .scripts/build_steps.sh; then
+    conda-smithy rerender
+fi
 
 if [ "$PACKAGE" == "python-rapidjson" ]; then
     sed -i 's/pytest tests/pytest tests --ignore=tests\/test_memory_leaks.py --ignore=tests\/test_circular.py/g' recipe/meta.yaml
