@@ -37,9 +37,6 @@ def main():
         if "pyston" in c:
             continue
 
-        if "numpy" in cwd and "mkl" not in c:
-            continue
-
         possible_configs.append(c)
 
     assert len(possible_configs) == 1, possible_configs

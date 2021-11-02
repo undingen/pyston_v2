@@ -4,10 +4,16 @@ cryptography
 cython
 uwsgi
 python-rapidjson
+idna
 idna_ssl
 multidict
 yarl
 aiohttp
+pycparser
+pyopenssl
+pysocks
+urllib3
+olefile
 Pillow
 numpy
 scipy

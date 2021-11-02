@@ -33,7 +33,7 @@ if [ "$PACKAGE" == "numpy" ]; then
 fi
 
 # conda-forge-ci-setup automatically sets add_pip_as_python_dependency=false
-CI=1 CONDA_FORGE_DOCKER_RUN_ARGS="-e EXTRA_CB_OPTIONS" EXTRA_CB_OPTIONS="-c $CHANNEL --debug --dirty" python3 build-locally.py $(CHANNEL=$CHANNEL python3 $MAKE_CONFIG_PY)
+CI=1 CONDA_FORGE_DOCKER_RUN_ARGS="-e EXTRA_CB_OPTIONS" EXTRA_CB_OPTIONS="-c $CHANNEL" python3 build-locally.py $(CHANNEL=$CHANNEL python3 $MAKE_CONFIG_PY)
 
 echo "Done! Build artifacts are:"
 find build_artifacts -name '*.tar.bz2' | xargs realpath
