@@ -21,16 +21,19 @@ CPPFLAGS="-isystem ${PREFIX}/include"
 # without this line we can't find zlib and co..
 CPPFLAGS=${CPPFLAGS}" -I${PREFIX}/include"
 
+# gcc-11 defaults to dwarf-5 which breaks bolt (Unsupported DWARFLocationEntry Kind)
+CFLAGS=${CFLAGS}" -g -gdwarf-4"
+
 rm -rf build
 
 if [ "${PYSTON_UNOPT_BUILD}" = "1" ]; then
     make -j`nproc` unopt
-    make -j`nproc` cpython_testsuite
+    #make -j`nproc` cpython_testsuite
     OUTDIR=${SRC_DIR}/build/unopt_install/usr
     PYSTON=${OUTDIR}/bin/python3
 else
     RELEASE_PREFIX=${PREFIX} make -j`nproc` release
-    RELEASE_PREFIX=${PREFIX} make -j`nproc` cpython_testsuite_release
+    #RELEASE_PREFIX=${PREFIX} make -j`nproc` cpython_testsuite_release
     OUTDIR=${SRC_DIR}/build/release_install${PREFIX}
     PYSTON=${OUTDIR}/bin/python3.bolt
 fi
