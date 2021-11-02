@@ -11,6 +11,11 @@ def rewrite_config(config_str):
     else:
         raise Exception("didn't find 'python' line")
 
+    for i in range(len(lines)):
+        if lines[i] == "python_impl:":
+            lines[i + 1] = "- pyston"
+            break
+
     return '\n'.join(lines)
 
 def main():
