@@ -14,7 +14,7 @@ RANLIB=$(basename "${RANLIB}")
 READELF=$(basename "${READELF}")
 
 # overwrite default conda build flags else the bolt instrumented binary will not work
-CFLAGS="-isystem ${PREFIX}/include"
+CFLAGS="-isystem ${PREFIX}/include -g -gdwarf-4"
 LDFLAGS="-Wl,-rpath,${PREFIX}/lib -Wl,-rpath-link,${PREFIX}/lib -L${PREFIX}/lib"
 CPPFLAGS="-isystem ${PREFIX}/include"
 
