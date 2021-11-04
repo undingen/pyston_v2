@@ -26,7 +26,7 @@ conda build pyston_dir/pyston/conda/pyston -c pyston/label/dev -c conda-forge --
 conda build pyston_dir/pyston/conda/python_abi -c conda-forge --override-channels
 conda build pyston_dir/pyston/conda/python -c conda-forge --override-channels
 
-conda install patch -y -c /conda_pkgs -c conda-forge --override-channels # required to apply the patches in some recipes
+conda install patch -y -c conda-forge --override-channels # required to apply the patches in some recipes
 
 # This are the arch dependent pip dependencies.
 # We set CONDA_ADD_PIP_AS_PYTHON_DEPENDENCY=0 to prevent the implicit dependency on pip when specifying python.
