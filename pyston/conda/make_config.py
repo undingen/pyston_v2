@@ -23,8 +23,6 @@ def main():
 
     possible_configs = []
 
-    given_substr = os.environ.get("BASE_CONFIG", "")
-
     cwd = os.getcwd()
 
     for c in configs:
@@ -36,7 +34,9 @@ def main():
             continue
         if c in ("migrations", "README"):
             continue
-        if given_substr and given_substr not in c:
+        if "openssl3" in c:
+            continue
+        if ("mpi4py" in cwd or "h5py" in cwd) and ("openmpi" in c or "nompi" in c):
             continue
 
         if "pyston" in c:
