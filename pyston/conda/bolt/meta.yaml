@@ -1,13 +1,13 @@
 {% set build_num = 0 %}
-{% set version = "2021.10.27" %}
+{% set version = "fd" %}
 
 package:
   name: bolt
   version: {{ version }}
 
 source:
-  git_url: https://github.com/pyston/BOLT
-  git_rev: pyston_{{version}}
+  git_url: https://github.com/undingen/BOLT
+  git_rev: fd
   git_depth: -1
 
 build:
