@@ -46,7 +46,7 @@ conda build numpy-feedstock/ --python="${PYSTON_PKG_VER}" --override-channels -c
 for arch in noarch linux-64
 do
     mkdir -p /conda_pkgs/\${arch}
-    cp /opt/conda/conda-bld/\${arch}/*.tar.bz2 /conda_pkgs/\${arch}
+    cp /opt/conda/conda-bld/\${arch}/*.tar.bz2 /conda_pkgs/\${arch} || true
 done
 chown -R $(id -u):$(id -g) /conda_pkgs/
 

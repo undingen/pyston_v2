@@ -13,6 +13,6 @@ python3 pyston/conda/make_order.py numpy scipy tensorflow | while read pkg; do
         echo $pkg already built
         continue
     fi
-    bash $(dirname $0)/build_feedstock.sh $pkg
+    CI=1 bash $(dirname $0)/build_feedstock.sh $pkg
     anaconda upload -u kmod --label dev $(find $pkg-feedstock/build_artifacts/ -name '*.tar.bz2' | grep -v broken)
 done

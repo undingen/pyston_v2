@@ -65,7 +65,7 @@ def depends_on_python(pkg):
 
         if r and pkg not in ("python_abi", "certifi", "setuptools"):
             for b in getBuildRequirements(pkg):
-                if b in ("conda", "conda-smithy", "flaky", "nose"):
+                if b in ("conda", "conda-smithy", "conda-build", "conda-verify", "flaky", "nose"):
                     continue
                 subdepends = depends_on_python(b)
                 if subdepends and verbose:

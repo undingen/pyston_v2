@@ -39,6 +39,11 @@ def main():
         if ("mpi4py" in cwd or "h5py" in cwd) and ("openmpi" in c or "nompi" in c):
             continue
 
+        if "cuda_compiler_version" in c:
+            assert "11.3" not in c
+            if "11.2" not in c:
+                continue
+
         if "pyston" in c:
             continue
 
