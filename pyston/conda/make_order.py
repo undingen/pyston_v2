@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -37,7 +38,9 @@ def getBuildRequirements(pkg):
         subprocess.check_call(["git", "clone", "https://github.com/conda-forge/" + reponame], stdin=open("/dev/null"))
 
     with open(reponame + "/recipe/meta.yaml") as f:
-        return f.read().split()
+        s = f.read()
+
+    return re.findall("- ([^\w><=]+)", s)
 
 verbose = 0
 _depends_on_python = {"python": True}
@@ -50,9 +53,12 @@ def depends_on_python(pkg):
     if pkg not in _depends_on_python:
         _depends_on_python[pkg] = False
         if pkg not in packages_by_name:
+            if verbose:
+                print(pkg, "not a package we know about")
             return False
         if pkg in noarch_packages:
-            # print(pkg, "is noarch")
+            if verbose:
+                print(pkg, "is noarch")
             return False
         if pkg in ("glib",):
             return False
@@ -68,8 +74,6 @@ def depends_on_python(pkg):
 
         if r and pkg not in ("python_abi", "certifi", "setuptools"):
             for b in getBuildRequirements(pkg):
-                if b in ("conda", "conda-smithy", "conda-build", "conda-verify", "flaky", "nose", "rejected"):
-                    continue
                 subdepends = depends_on_python(b)
                 if subdepends and verbose:
                     print(pkg, "build depends on", b)
@@ -118,6 +122,6 @@ if __name__ == "__main__":
         targets.remove("-v")
 
     if not targets:
-        targets = ["Pillow", "urllib3", "numpy", "scipy", "pandas", "tensorflow", "pytorch"]
+        targets = ["Pillow", "urllib3", "numpy", "scipy", "pandas", "tensorflow"]
 
     main(targets)
