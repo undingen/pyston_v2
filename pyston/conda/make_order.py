@@ -35,6 +35,7 @@ def getBuildRequirements(pkg):
 
     if not os.path.exists(reponame):
         subprocess.check_call(["git", "clone", "https://github.com/conda-forge/" + reponame], stdin=open("/dev/null"))
+
     with open(reponame + "/recipe/meta.yaml") as f:
         return f.read().split()
 
@@ -53,6 +54,8 @@ def depends_on_python(pkg):
         if pkg in noarch_packages:
             # print(pkg, "is noarch")
             return False
+        if pkg in ("glib",):
+            return False
         r = False
         for d in packages_by_name[pkg]['depends']:
             dn = d.split()[0]
@@ -65,7 +68,7 @@ def depends_on_python(pkg):
 
         if r and pkg not in ("python_abi", "certifi", "setuptools"):
             for b in getBuildRequirements(pkg):
-                if b in ("conda", "conda-smithy", "conda-build", "conda-verify", "flaky", "nose"):
+                if b in ("conda", "conda-smithy", "conda-build", "conda-verify", "flaky", "nose", "rejected"):
                     continue
                 subdepends = depends_on_python(b)
                 if subdepends and verbose:
