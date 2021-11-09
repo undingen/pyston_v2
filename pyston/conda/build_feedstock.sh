@@ -3,6 +3,7 @@
 set -exo pipefail
 
 PACKAGE=$1
+THISDIR=$(realpath $(dirname $0))
 PYSTON_PKG_VER="3.8.12 *_23_pyston"
 
 if [ -z "$CHANNEL" ]; then
@@ -40,8 +41,38 @@ fi
 if [ "$PACKAGE" == "python-rapidjson" ]; then
     sed -i 's/pytest tests/pytest tests --ignore=tests\/test_memory_leaks.py --ignore=tests\/test_circular.py/g' recipe/meta.yaml
 fi
+
 if [ "$PACKAGE" == "numpy" ]; then
     sed -i 's/_not_a_real_test/test_for_reference_leak or test_api_importable/g' recipe/meta.yaml
+fi
+
+if [ "$PACKAGE" == "implicit" ]; then
+    # Not 100% sure but I think this line is over-indented in the meta.yaml
+    # file and that causes issues. Not sure why it causes issues for us but not
+    # CPython
+    # sed -i 's/      script:/    script:/' recipe/meta.yaml
+
+    # The build step here implicitly does a `pip install numpy scipy`.
+    # For CPython this will download a pre-built wheel from pypi, but
+    # for Pyston it will try to recompile both of these packages.
+    # But the meta.yaml doesn't include all the dependencies of
+    # building scipy, specifically a fortran compiler, so we have to add it:
+    sed -i "/        - {{ compiler('fortran') }}/d" recipe/meta.yaml
+    sed -i "s/        - {{ compiler('cxx') }}/        - {{ compiler('cxx') }}\n        - {{ compiler('fortran') }}/" recipe/meta.yaml
+
+    # I don't understand exactly why, but it seems like you can't install
+    # both a fortran compiler and gcc 7. So update the configs to use gcc 9
+    sed -i "s/'7'/'9'/" .ci_support/*.yaml
+fi
+
+if [ "$PACKAGE" == "pyqt" ]; then
+    cp $THISDIR/patches/pyqt.patch recipe/pyston.patch
+    sed -i "/pyston.patch/d" recipe/meta.yaml
+    sed -i "s/      - qt5_dll.diff/      - qt5_dll.diff\n      - pyston.patch/" recipe/meta.yaml
+fi
+
+if [ "$PACKAGE" == "scikit-build" ]; then
+    sed -i "s/not test_fortran_compiler/not test_fortran_compiler and not test_get_python_version/" recipe/run_test.sh
 fi
 
 # conda-forge-ci-setup automatically sets add_pip_as_python_dependency=false
