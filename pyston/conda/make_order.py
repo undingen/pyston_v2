@@ -1,5 +1,6 @@
 import json
 import os
+import pickle
 import re
 import subprocess
 import sys
@@ -40,7 +41,7 @@ def getBuildRequirements(pkg):
     with open(reponame + "/recipe/meta.yaml") as f:
         s = f.read()
 
-    return re.findall("- ([^\w><=]+)", s)
+    return re.findall("- ([^\w><={]+)", s)
 
 verbose = 0
 _depends_on_python = {"python": True}
@@ -49,70 +50,94 @@ listed = set()
 packages_by_name = {}
 noarch_packages = set()
 
-def depends_on_python(pkg):
+def _dependsOnPython(pkg):
+    if pkg not in packages_by_name:
+        if verbose:
+            print(pkg, "not a package we know about")
+        return False
+
+    for pattern in ("lib", "gcc", "gxx"):
+        if re.match(pattern, pkg):
+            return False
+
+    r = False
+    dependencies = set(packages_by_name[pkg]['depends'])
+    if pkg not in noarch_packages and pkg not in ("python_abi", "certifi", "setuptools"):
+        dependencies.update(getBuildRequirements(pkg))
+
+    if verbose:
+        print(pkg, dependencies)
+
+    for d in sorted(dependencies):
+        dn = d.split()[0]
+        subdepends = dependsOnPython(dn)
+        r = subdepends or r
+        if subdepends and verbose:
+            print(pkg, "depends on", d)
+
+    _depends_on_python[pkg] = r
+
+    if not r:
+        return False
+
+    if pkg in ("glib", "python_abi", "certifi", "setuptools"):
+        return False
+
+    if pkg in noarch_packages:
+        if verbose:
+            print(pkg, "is noarch")
+    else:
+        name = getFeedstockName(pkg)
+        if name not in listed:
+            print(name)
+            listed.add(name)
+
+    return r
+
+def dependsOnPython(pkg):
     if pkg not in _depends_on_python:
-        _depends_on_python[pkg] = False
-        if pkg not in packages_by_name:
-            if verbose:
-                print(pkg, "not a package we know about")
-            return False
-        if pkg in noarch_packages:
-            if verbose:
-                print(pkg, "is noarch")
-            return False
-        if pkg in ("glib",):
-            return False
-        r = False
-        for d in packages_by_name[pkg]['depends']:
-            dn = d.split()[0]
-            subdepends = depends_on_python(dn)
-            r = subdepends or r
-            if subdepends and verbose:
-                print(pkg, "run depends on", d)
-        _depends_on_python[pkg] = r
-        # print(pkg, r)
-
-        if r and pkg not in ("python_abi", "certifi", "setuptools"):
-            for b in getBuildRequirements(pkg):
-                subdepends = depends_on_python(b)
-                if subdepends and verbose:
-                    print(pkg, "build depends on", b)
-
-            name = getFeedstockName(pkg)
-            if name not in listed:
-                print(name)
-                listed.add(name)
+        _depends_on_python[pkg] = False # for circular dependencies
+        _depends_on_python[pkg] = _dependsOnPython(pkg)
     return _depends_on_python[pkg]
 
 def main(targets):
-    repodata_fn = "repodata_condaforge_linux64.json"
-    if not os.path.exists(repodata_fn):
-        print("Downloading...")
-        subprocess.check_call(["wget", "https://conda.anaconda.org/conda-forge/linux-64/repodata.json.bz2", "-O", repodata_fn + ".bz2"])
-        subprocess.check_call(["bzip2", "-d", repodata_fn + ".bz2"])
+    global packages_by_name, noarch_packages
+    if not os.path.exists("repo.pkl"):
+        repodata_fn = "repodata_condaforge_linux64.json"
+        if not os.path.exists(repodata_fn):
+            print("Downloading...")
+            subprocess.check_call(["wget", "https://conda.anaconda.org/conda-forge/linux-64/repodata.json.bz2", "-O", repodata_fn + ".bz2"])
+            subprocess.check_call(["bzip2", "-d", repodata_fn + ".bz2"])
 
-    repodata_noarch_fn = "repodata_condaforge_noarch.json"
-    if not os.path.exists(repodata_noarch_fn):
-        print("Downloading...")
-        subprocess.check_call(["wget", "https://conda.anaconda.org/conda-forge/noarch/repodata.json.bz2", "-O", repodata_noarch_fn + ".bz2"])
-        subprocess.check_call(["bzip2", "-d", repodata_noarch_fn + ".bz2"])
+        repodata_noarch_fn = "repodata_condaforge_noarch.json"
+        if not os.path.exists(repodata_noarch_fn):
+            print("Downloading...")
+            subprocess.check_call(["wget", "https://conda.anaconda.org/conda-forge/noarch/repodata.json.bz2", "-O", repodata_noarch_fn + ".bz2"])
+            subprocess.check_call(["bzip2", "-d", repodata_noarch_fn + ".bz2"])
 
-    if verbose:
-        print("Loading...")
-    data = json.load(open(repodata_fn))
-    data_noarch = json.load(open(repodata_noarch_fn))
+        if verbose:
+            print("Loading...")
+        data = json.load(open(repodata_fn))
+        data_noarch = json.load(open(repodata_noarch_fn))
+
+        for k, v in data["packages"].items():
+            packages_by_name[v['name']] = v
+
+        for k, v in data_noarch["packages"].items():
+            if "pypy" in k:
+                continue
+            packages_by_name[v['name']] = v
+            noarch_packages.add(v['name'])
+
+        pickle.dump((packages_by_name, noarch_packages), open("_repo.pkl", "wb"))
+        os.rename("_repo.pkl", "repo.pkl")
+
+    packages_by_name, noarch_packages = pickle.load(open("repo.pkl", "rb"))
+
     if verbose:
         print("Analyzing...")
-    packages = data["packages"]
-
-    for k, v in packages.items():
-        packages_by_name[v['name']] = v
-
-    for k, v in data_noarch["packages"].items():
-        noarch_packages.add(v['name'])
-
     for name in targets:
-        depends_on_python(name)
+        dependsOnPython(name)
 
 if __name__ == "__main__":
     targets = sys.argv[1:]
