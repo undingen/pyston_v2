@@ -18,6 +18,7 @@ _feedstock_overrides = {
     "pyqt-impl": "pyqt",
     "pyqtwebengine": "pyqt",
     "pyqtchart": "pyqt",
+    "pytorch": "pytorch-cpu",
     "argon2-cffi": "argon2_cffi",
     "atk-1.0": "atk",
     "pybind11-abi": "pybind11",
@@ -28,6 +29,7 @@ _feedstock_overrides = {
     "tensorflow-estimator": "tensorflow",
     "libtensorflow": "tensorflow",
     "libtensorflow_cc": "tensorflow",
+    "llvm-openmp": "openmp",
 }
 def getFeedstockName(pkg):
     return _feedstock_overrides.get(pkg, pkg)
@@ -62,7 +64,7 @@ def _dependsOnPython(pkg):
 
     r = False
     dependencies = set(packages_by_name[pkg]['depends'])
-    if pkg not in noarch_packages and pkg not in ("python_abi", "certifi", "setuptools"):
+    if pkg not in noarch_packages and pkg not in ("python_abi", "certifi", "setuptools", "mkl"):
         dependencies.update(getBuildRequirements(pkg))
 
     if verbose:
