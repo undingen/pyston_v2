@@ -17,7 +17,7 @@ set -eux
 apt-get update
 
 # some cpython tests require /etc/protocols
-apt-get install -y netbase curl
+apt-get install -y netbase curl patch
 
 conda install conda-build -y
 conda build pyston_dir/pyston/conda/compiler-rt -c pyston/label/dev --skip-existing -c conda-forge --override-channels
@@ -28,7 +28,7 @@ conda build pyston_dir/pyston/conda/python -c conda-forge --override-channels
 
 conda install patch -y -c conda-forge --override-channels # required to apply the patches in some recipes
 
-# This are the arch dependent pip dependencies. 
+# This are the arch dependent pip dependencies.
 for pkg in certifi setuptools
 do
     git clone https://github.com/conda-forge/\${pkg}-feedstock.git

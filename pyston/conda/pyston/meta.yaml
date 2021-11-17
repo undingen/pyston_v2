@@ -27,18 +27,22 @@ source:
     # Pyston: Not sure why this one causes a build failure for us:
     # - patches/0008-Darwin-Look-in-sysroot-usr-lib-include-if-sysroot-is.patch
     - patches/0009-runtime_library_dir_option-Use-1st-word-of-CC-as-com.patch
-    - patches/0010-Win32-Do-not-download-externals.patch
+    # Pyston: does not apply - but is windows only so just skip
+    # - patches/0010-Win32-Do-not-download-externals.patch
     # Pyston: our build script wants to know what the name of the sysconfigdata.py file is
     # - patches/0011-Add-support-for-_CONDA_PYTHON_SYSCONFIGDATA_NAME-if-.patch
     - patches/0012-Fix-find_library-so-that-it-looks-in-sys.prefix-lib-.patch
     - patches/0013-Disable-new-dtags-in-unixccompiler.py.patch
     - patches/0014-Fix-cross-compilation-on-Debian-based-distros.patch
     - patches/0015-Disable-registry-lookup-unless-CONDA_PY_ALLOW_REG_PA.patch
-    - patches/0016-Unvendor-openssl.patch
-    - patches/0017-Unvendor-sqlite3.patch
+    # Pyston: does not apply - but is windows only so just skip
+    # - patches/0016-Unvendor-openssl.patch
+    # Pyston: does not apply - but is windows only so just skip
+    # - patches/0017-Unvendor-sqlite3.patch
     # https://bugs.python.org/issue35644
     - patches/0018-venv-Revert-a-change-from-https-github.com-python-cp.patch
-    - patches/0019-Win-Add-back-the-DLLSuffix-used-to-find-the-openssl-.patch
+    # Pyston: does not apply - but is windows only so just skip
+    # - patches/0019-Win-Add-back-the-DLLSuffix-used-to-find-the-openssl-.patch
     - patches/0020-Use-ranlib-from-env-if-env-variable-is-set.patch
     # Python 3.8 is pretty broken without this.
     - patches/0022-Add-CondaEcosystemModifyDllSearchPath.patch
