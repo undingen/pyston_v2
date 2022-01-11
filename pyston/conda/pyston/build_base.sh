@@ -130,6 +130,7 @@ export CONFIGURE_EXTRA_FLAGS='${_common_configure_args[@]} --oldincludedir=${BUI
 if [ "${PYSTON_UNOPT_BUILD}" = "1" ]; then
     make -j`nproc` unopt
     make -j`nproc` cpython_testsuite
+    make -j`nproc` tests
     OUTDIR=${SRC_DIR}/build/unopt_install/usr
     PYSTON=${OUTDIR}/bin/python3
 else
