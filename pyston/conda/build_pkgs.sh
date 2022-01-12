@@ -26,6 +26,8 @@ apt-get update
 # some cpython tests require /etc/protocols
 apt-get install -y netbase curl patch
 
+apt-get install -y libwebp-dev libjpeg-dev python3.8-gdbm python3.8-tk python3.8-dev tk-dev libgdbm-dev libgdbm-compat-dev liblzma-dev libbz2-dev nginx rustc
+
 conda install conda-build -y
 conda build pyston_dir/pyston/conda/compiler-rt -c pyston --skip-existing -c conda-forge --override-channels
 conda build pyston_dir/pyston/conda/bolt -c pyston --skip-existing -c conda-forge --override-channels
