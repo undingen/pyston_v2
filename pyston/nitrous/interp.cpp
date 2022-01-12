@@ -7,6 +7,7 @@
 
 #include <ffi.h>
 
+#include "llvm/ADT/StringSet.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Constants.h"
@@ -35,13 +36,13 @@ namespace nitrous {
 static unique_ptr<SymbolFinder> symbol_finder;
 static unique_ptr<LLVMCompiler> compiler;
 static unique_ptr<JitConsts> jit_consts;
-static unordered_set<string> do_not_trace, always_trace;
+static StringSet<> do_not_trace, always_trace;
 
 string findNameForAddress(void* address) {
     return symbol_finder->lookupAddress(address);
 }
 
-void* findAddressForName(const string& name) {
+void* findAddressForName(StringRef name) {
     return symbol_finder->lookupSymbol(name);
 }
 
@@ -157,8 +158,8 @@ class BitcodeRegistry {
 private:
     vector<unique_ptr<MemoryBuffer>> loaded_module_data;
     vector<unique_ptr<Module>> loaded_modules;
-    unordered_map<string, Function*> functions;
-    unordered_map<string, GlobalVariable*> global_variables;
+    StringMap<Function*> functions;
+    StringMap<GlobalVariable*> global_variables;
 
 public:
     void load(const char* filename) {
