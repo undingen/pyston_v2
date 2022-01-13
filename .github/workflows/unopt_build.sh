@@ -3,6 +3,9 @@ set -eux
 
 export DEBIAN_FRONTEND=noninteractive
 
+# workaround for setuptools 60
+export SETUPTOOLS_USE_DISTUTILS=stdlib
+
 # install dependencies
 apt-get update
 apt-get install -y build-essential ninja-build git cmake clang llvm libssl-dev libsqlite3-dev luajit python3.8 zlib1g-dev virtualenv libjpeg-dev linux-tools-common linux-tools-generic linux-tools-`uname -r`
