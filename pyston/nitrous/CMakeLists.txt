@@ -3,9 +3,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ferror-limit=5 -fcolor-diagnostics")
 
 set(LLVM_LIB_DEPS LLVMCore LLVMSupport  LLVMBitReader LLVMAsmParser  LLVMTransformUtils LLVMScalarOpts  LLVMOrcJIT LLVMX86CodeGen LLVMX86AsmParser)
 
-if( ${LLVM_INCLUDE_DIRS} )
+if( ${LLVM_USE_PERF} )
     set(LLVM_LIB_DEPS ${LLVM_LIB_DEPS} LLVMPerfJITEvents)
-endif( ${LLVM_INCLUDE_DIRS} )
+endif( ${LLVM_USE_PERF} )
 
 add_library(interp SHARED interp.cpp jit.cpp symbol_finder.cpp Execution.cpp Interpreter.cpp facts.cpp)
 target_include_directories(interp PRIVATE ${LLVM_INCLUDE_DIRS})
