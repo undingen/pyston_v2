@@ -21,6 +21,6 @@ git submodule update --init "pyston/test/*"
 # have to install late because it will update llvm-10 to 13 or so
 apt-get install -y rustc
 
-make tests -j$(nproc)
+#make tests -j$(nproc)
 
-make test -j$(nproc)
+make test
