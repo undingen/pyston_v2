@@ -66,7 +66,8 @@ jobs:
           sudo chmod a+rwx /cores
           echo "/cores/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
 
-          docker run -iv${PWD}:/pyston_dir -iv/cores:/cores --name pyston_build ubuntu:20.04 /pyston_dir/.github/workflows/unopt_build.sh
+          docker build -t ubuntu_nonroot .
+          docker run -iv${PWD}:/pyston_dir -iv/cores:/cores --name pyston_build ubuntu_nonroot /pyston_dir/.github/workflows/unopt_build.sh
 
       # core dump handling steps in case of failure
       - name: Core dump - add conda build directory
