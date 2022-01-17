@@ -490,11 +490,11 @@ test: build/system_env/bin/python build/unopt_env/bin/python
 	JIT_MAX_MEM=50000 build/unopt_env/bin/python pyston/test/jit_osr_limit.py
 	build/unopt_env/bin/python pyston/test/test_venvs.py
 	rm -f $(wildcard pyston/test/external/*.output)
-	JIT_MIN_RUNS=0 $(MAKE) _runtests
+	JIT_MIN_RUNS=0 $(MAKE) tests cpython_testsuite
 	rm -f $(wildcard pyston/test/external/*.output)
-	JIT_MIN_RUNS=50 $(MAKE) _runtests
+	JIT_MIN_RUNS=50 $(MAKE) tests cpython_testsuite
 	rm -f $(wildcard pyston/test/external/*.output)
-	JIT_MIN_RUNS=9999999999 $(MAKE) _runtests
+	JIT_MIN_RUNS=9999999999 $(MAKE) tests cpython_testsuite
 	rm -f $(wildcard pyston/test/external/*.output)
 
 stocktest: build/stockunopt_build/python
