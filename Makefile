@@ -488,7 +488,6 @@ test: build/system_env/bin/python build/unopt_env/bin/python
 	$(MAKE) _runtests
 	JIT_MAX_MEM=50000 build/unopt_env/bin/python pyston/test/jit_limit.py
 	JIT_MAX_MEM=50000 build/unopt_env/bin/python pyston/test/jit_osr_limit.py
-	build/unopt_env/bin/python pyston/test/test_venvs.py
 	rm -f $(wildcard pyston/test/external/*.output)
 	JIT_MIN_RUNS=0 $(MAKE) tests cpython_testsuite
 	rm -f $(wildcard pyston/test/external/*.output)
