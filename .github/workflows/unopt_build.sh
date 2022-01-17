@@ -14,6 +14,7 @@ sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y llvm-dev
 
 export PYSTON_USE_SYS_BINS=1 # build has to use system llvm and clang binaries
 
+sudo chown -R `whoami` /pyston_dir
 cd /pyston_dir
 
 make unopt -j$(nproc)
