@@ -26,4 +26,4 @@ sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y rustc
 
 #make tests -j$(nproc)
 
-make test
+make test -j$(nproc)
