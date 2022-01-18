@@ -78,7 +78,7 @@ jobs:
             docker cp pyston_build:/pyston_dir /tmp/pyston_dir
             tar -C /tmp/ -czf /cores/pyston_dir.tar.gz pyston_dir/
           fi
-          sudo chmod -R a+rwx /cores
+          sudo chmod -R +rwx /cores
           sudo chown -R $USER:$USER /cores
       - name: Core dump - upload
         if: ${{ failure() }}
