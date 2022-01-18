@@ -75,8 +75,8 @@ jobs:
         run: |
           # if we find a core dump copy in conda build directory as archive
           if [ "$(ls -A /cores)" ]; then
-            docker cp pyston_build:/opt/conda/conda-bld /tmp/conda-bld
-            tar -C /tmp/ -czf /cores/conda-bld.tar.gz conda-bld/
+            docker cp pyston_build:/pyston_dir /tmp/pyston_dir
+            tar -C /tmp/ -czf /cores/pyston_dir.tar.gz pyston_dir/
           fi
           sudo chmod -R a+rwx /cores
           sudo chown -R $USER:$USER /cores
@@ -84,6 +84,6 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@v2
         with:
-          name: core-dump-${{ matrix.build }}
+          name: core-dump-unopt_build
           path: /cores/
           if-no-files-found: ignore
