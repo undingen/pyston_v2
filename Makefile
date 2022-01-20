@@ -452,13 +452,13 @@ $(call make_test_build,dbgexpected,build/stockdbg_env/bin/python)
 .PRECIOUS: pyston/test/external/test_%.dbgexpected pyston/test/external/test_%.dbgoutput
 $(call make_test_build,dbgoutput,build/dbg_env/bin/python)
 
-test_%: pyston/test/external/test_%.expected pyston/test/external/test_%.output
+test_%: pyston/test/external/test_%.output pyston/test/external/test_%.expected
 	build/system_env/bin/python pyston/test/external/helpers.py compare $< $(patsubst %.expected,%.output,$<)
 
-testopt_%: pyston/test/external/test_%.expected pyston/test/external/test_%.optoutput
-	build/system_env/bin/python pyston/test/external/helpers.py compare $< $(patsubst %.expected,%.output,$<)
+testopt_%: pyston/test/external/test_%.optoutput pyston/test/external/test_%.optexpected
+	build/system_env/bin/python pyston/test/external/helpers.py compare $< $(patsubst %.optexpected,%.optoutput,$<)
 
-testdbg_%: pyston/test/external/test_%.dbgexpected pyston/test/external/test_%.dbgoutput
+testdbg_%: pyston/test/external/test_%.dbgoutput pyston/test/external/test_%.dbgexpected
 	build/system_env/bin/python pyston/test/external/helpers.py compare $< $(patsubst %.dbgexpected,%.dbgoutput,$<)
 
 TESTFILES:=$(wildcard pyston/test/*.py)
@@ -466,7 +466,7 @@ tests: $(patsubst %.py,%_unopt,$(TESTFILES))
 tests_dbg: $(patsubst %.py,%_dbg,$(TESTFILES))
 tests_opt: $(patsubst %.py,%_opt,$(TESTFILES))
 
-EXTERNAL_TESTSUITES:=django urllib3 setuptools six requests sqlalchemy pandas
+EXTERNAL_TESTSUITES:=django urllib3 setuptools six requests sqlalchemy pandas numpy
 testsuites: $(patsubst %,test_%,$(EXTERNAL_TESTSUITES))
 testsuites_dbg: $(patsubst %,testdbg_%,$(EXTERNAL_TESTSUITES))
 testsuites_opt: $(patsubst %,testopt_%,$(EXTERNAL_TESTSUITES))
@@ -483,19 +483,12 @@ _runtestsopt: tests_opt testsuites_opt cpython_testsuite_opt
 
 test: build/system_env/bin/python build/unopt_env/bin/python
 	rm -f $(wildcard pyston/test/external/*.output)
-	# Test mostly tests the CAPI so don't rerun it with different JIT_MIN_RUNS
-	# Note: test_numpy is internally parallel so we might have to re-separate it
-	# into a separate step
-	$(MAKE) _runtests test_numpy
+	$(MAKE) _runtests
 	JIT_MAX_MEM=50000 build/unopt_env/bin/python pyston/test/jit_limit.py
 	JIT_MAX_MEM=50000 build/unopt_env/bin/python pyston/test/jit_osr_limit.py
-	build/unopt_env/bin/python pyston/test/test_venvs.py
-	rm -f $(wildcard pyston/test/external/*.output)
-	JIT_MIN_RUNS=0 $(MAKE) _runtests
-	rm -f $(wildcard pyston/test/external/*.output)
-	JIT_MIN_RUNS=50 $(MAKE) _runtests
-	rm -f $(wildcard pyston/test/external/*.output)
-	JIT_MIN_RUNS=9999999999 $(MAKE) _runtests
+	JIT_MIN_RUNS=0 $(MAKE) tests cpython_testsuite
+	JIT_MIN_RUNS=50 $(MAKE) tests cpython_testsuite
+	JIT_MIN_RUNS=9999999999 $(MAKE) tests cpython_testsuite
 	rm -f $(wildcard pyston/test/external/*.output)
 
 stocktest: build/stockunopt_build/python
