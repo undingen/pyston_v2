@@ -452,13 +452,13 @@ $(call make_test_build,dbgexpected,build/stockdbg_env/bin/python)
 .PRECIOUS: pyston/test/external/test_%.dbgexpected pyston/test/external/test_%.dbgoutput
 $(call make_test_build,dbgoutput,build/dbg_env/bin/python)
 
-test_%: pyston/test/external/test_%.output pyston/test/external/test_%.expected
+test_%: pyston/test/external/test_%.expected pyston/test/external/test_%.output
 	build/system_env/bin/python pyston/test/external/helpers.py compare $< $(patsubst %.expected,%.output,$<)
 
-testopt_%: pyston/test/external/test_%.optoutput pyston/test/external/test_%.optexpected
-	build/system_env/bin/python pyston/test/external/helpers.py compare $< $(patsubst %.optexpected,%.optoutput,$<)
+testopt_%: pyston/test/external/test_%.expected pyston/test/external/test_%.optoutput
+	build/system_env/bin/python pyston/test/external/helpers.py compare $< $(patsubst %.expected,%.output,$<)
 
-testdbg_%: pyston/test/external/test_%.dbgoutput pyston/test/external/test_%.dbgexpected
+testdbg_%: pyston/test/external/test_%.dbgexpected pyston/test/external/test_%.dbgoutput
 	build/system_env/bin/python pyston/test/external/helpers.py compare $< $(patsubst %.dbgexpected,%.dbgoutput,$<)
 
 TESTFILES:=$(wildcard pyston/test/*.py)
