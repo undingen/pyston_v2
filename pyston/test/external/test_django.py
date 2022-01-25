@@ -17,6 +17,8 @@ if __name__ == "__main__":
         def rel(path):
             return os.path.join(os.path.dirname(__file__), path)
 
+        subprocess.check_call(["git", "clean", "-fdx"], cwd=rel("django")])
+        
         env_dir = os.path.abspath(os.path.join(tempdir, "env"))
         subprocess.check_call([rel("../../../build/bootstrap_env/bin/virtualenv"), "-p", sys.executable, env_dir])
 
