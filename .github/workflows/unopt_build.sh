@@ -1,9 +1,6 @@
 #!/bin/bash
 set -eux
 
-# workaround for setuptools 60
-export SETUPTOOLS_USE_DISTUTILS=stdlib
-
 export DEBIAN_FRONTEND=noninteractive
 
 # install dependencies

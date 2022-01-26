@@ -1,9 +1,6 @@
 #!/bin/bash
 set -eux
 
-# workaround for setuptools 60
-export SETUPTOOLS_USE_DISTUTILS=stdlib
-
 # pyston should not compile llvm and bolt but instead use the conda packages
 export PYSTON_USE_SYS_BINS=1
 
