@@ -138,8 +138,8 @@ int unpack_iterable(PyThreadState *, PyObject *, int, int, PyObject **);
 // we only define the ones the helpers are currently using because else gcc will completely
 // avoid using this registers even though it could safely use them
 #if __aarch64__
-register PyObject** stack_pointer asm("x20");
-register PyFrameObject* f asm("x21");
+register PyObject** stack_pointer asm("x23");
+register PyFrameObject* f asm("x19");
 register PyThreadState* tstate asm("x22");
 #else
 register PyObject** stack_pointer asm("r12");

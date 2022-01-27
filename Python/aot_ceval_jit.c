@@ -190,7 +190,11 @@ typedef struct Jit {
 #define Dst_REF Dst->d
 
 #include <dynasm/dasm_proto.h>
+#if __aarch64__
+#include <dynasm/dasm_arm64.h>
+#else
 #include <dynasm/dasm_x86.h>
+#endif
 
 #include <sys/mman.h>
 #include <ctype.h>
@@ -634,58 +638,66 @@ static unsigned long jit_stat_load_global_hit, jit_stat_load_global_miss, jit_st
 #define ENABLE_DEFINED_TRACKING 1
 #define ENABLE_AVOID_SIG_TRACE_CHECK 1
 
-
+|.if arch==aarch64
+|.arch arm64
+|.else
 |.arch x64
+|.endif
 // section layout is same as specified here from left to right
 |.section entry, code, cold, opcode_addr
 
 ////////////////////////////////
 // REGISTER DEFINITIONS
 
-|.macro define_reg, name, name_idx, reg_amd64, reg_amd64_idx
-|.define name, reg_amd64
+|.macro define_reg, name, name_idx, reg_amd64, reg_amd64_idx, reg_arm64, reg_arm64_idx
+|.if arch==aarch64
+| .define name, reg_arm64
+|| #define name_idx reg_arm64_idx
+|.else
+| .define name, reg_amd64
 || #define name_idx reg_amd64_idx
+|.endif
 |.endmacro
 
 // all this values are in callee saved registers
 // NOTE: r13 and rbp need 1 byte more to encode a direct memory access without offset
 // e.g. mov rax, [rbp] is encoded as mov rax, [rbp + 0]
-| define_reg f, f_idx, r13, 13 // PyFrameObject*
+| define_reg f, f_idx, r13, 13, x19, 19 // PyFrameObject*
 
 // this register gets used when we have to make a call but preserve a value across it.
 // It can never get used in the deferred_vs / will never get used across bytecode instructions
 // One has to manually check the surrounding code if it's safe to use this register.
 // This register will not automatically get xdecrefed on error / return
 // so no need to clear it after use.
-| define_reg tmp_preserved_reg, tmp_preserved_reg_idx, rbp, 5 // PyFrameObject*
+| define_reg tmp_preserved_reg, tmp_preserved_reg_idx, rbp, 5, x20, 20 // PyFrameObject*
 
 // this register gets mainly used by deferred_vs when we have to make a call
 // but preserve a value which is inside the 'res' register (same as stack slot entry but faster).
 // Code needs to always check Dst->deferred_vs_preserved_reg_used to see if it's available.
 // On error or return we will always xdecref this register which means that
 // code must manually clear the register if it does not want the decref.
-| define_reg vs_preserved_reg, vs_preserved_reg_idx, r14, 14 // PyFrameObject*
+| define_reg vs_preserved_reg, vs_preserved_reg_idx, r14, 14, x21, 21 // PyFrameObject*
 
-| define_reg tstate, tstate_idx, r15, 15 // PyThreadState*
-| define_reg vsp, vsp_idx, r12, 12 // PyObject** - python value stack pointer
+| define_reg tstate, tstate_idx, r15, 15, x22, 22 // PyThreadState*
+| define_reg vsp, vsp_idx, r12, 12, x23, 23 // PyObject** - python value stack pointer
 
 // pointer to ceval->tracing_possible
-| define_reg interrupt, interrupt_idx, rbx, 3 // if you change this you may have to adjust jmp_to_inst_idx
+| define_reg interrupt, interrupt_idx, rbx, 3, x24, 24 // if you change this you may have to adjust jmp_to_inst_idx
 
 
 // follow AMD64 calling convention
 // instruction indices can be found here: https://corsix.github.io/dynasm-doc/instructions.html
 // function arguments
-| define_reg arg1, arg1_idx, rdi, 7
-| define_reg arg2, arg2_idx, rsi, 6
-| define_reg arg3, arg3_idx, rdx, 2
-| define_reg arg4, arg4_idx, rcx, 1
-| define_reg arg5, arg5_idx, r8,  8
-| define_reg arg6, arg6_idx, r9,  9 // careful same as register 'tmp'
+| define_reg arg1, arg1_idx, rdi, 7, x0, 0
+| define_reg arg2, arg2_idx, rsi, 6, x1, 1
+| define_reg arg3, arg3_idx, rdx, 2, x2, 2
+| define_reg arg4, arg4_idx, rcx, 1, x3, 3
+| define_reg arg5, arg5_idx, r8,  8, x4, 4
+| define_reg arg6, arg6_idx, r9,  9, x5, 5 // careful same as register 'tmp'
 
 // return values
-| define_reg res,  res_idx,  rax, 0
-| define_reg res2, res2_idx, rdx, 2 // second return value
+| define_reg res,  res_idx,  rax, 0, x0, 0
+| define_reg res2, res2_idx, rdx, 2, x1, 1 // second return value
 
 // will be used by macros
 |.define tmp, arg6
