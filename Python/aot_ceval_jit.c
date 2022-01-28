@@ -1515,7 +1515,7 @@ static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
         }
     } else {
         |.if arch==aarch64
-            JIT_ASSERT(0, "");
+            | ldr Rx(r_idx), [vsp, #-8*((num)-Dst->deferred_vs_next)]
         |.else
             | mov Rq(r_idx), [vsp-8*((num)-Dst->deferred_vs_next)]
         |.endif
@@ -1622,7 +1622,9 @@ static void deferred_vs_push_reg_and_apply(Jit* Dst, int r_idx) {
 // peeks the top stack entry into register r_idx_top and afterwards calls deferred_vs_apply
 // generates better code than doing it split
 static void deferred_vs_peek_top_and_apply(Jit* Dst, int r_idx_top) {
-    JIT_ASSERT(r_idx_top != res_idx && r_idx_top != vs_preserved_reg_idx, "they need special handling");
+    if (r_idx_top == res_idx && Dst->deferred_vs_res_used)
+        deferred_vs_convert_reg_to_stack(Dst);
+
     if (Dst->deferred_vs_next) {
         // load the value into the destination register and replace the deferred_vs entry
         // with one which accesses the register instead.
@@ -2287,7 +2289,7 @@ __attribute__((optimize("-O0"))) // enable to make "source tools/dis_jit_gdb.py"
 #endif
 void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #if __aarch64__
-    if (strcmp(PyUnicode_AsUTF8(co->co_name), "armjit") != 0)
+    if (memcmp(PyUnicode_AsUTF8(co->co_name), "armjit", 6) != 0)
         // disable JIT on ARM
         return NULL;
 #endif
@@ -2390,19 +2392,24 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case LOAD_FAST:
             if (!Dst->known_defined[oparg] /* can be null */) {
                 |.if ARCH==aarch64
-                JIT_ASSERT(0, ""); 
+                    | ldr tmp, [f, #get_fastlocal_offset(oparg)]
+                    | cmp tmp, #0
+                    | beq >1
                 |.else
-                | cmp qword [f + get_fastlocal_offset(oparg)], 0
-                | je >1
-
+                    | cmp qword [f + get_fastlocal_offset(oparg)], 0
+                    | je >1
+                |.endif
                 switch_section(Dst, SECTION_COLD);
                 |1:
                 emit_mov_imm(Dst, arg1_idx, oparg); // need to copy it in arg1 because of unboundlocal_error
-                | jmp ->unboundlocal_error // arg1 must be oparg!
+                |.if ARCH==aarch64
+                    | b ->unboundlocal_error // arg1 must be oparg!
+                |.else
+                    | jmp ->unboundlocal_error // arg1 must be oparg!
+                |.endif
                 switch_section(Dst, SECTION_CODE);
 
                 Dst->known_defined[oparg] = 1;
-                |.endif
             }
 
             deferred_vs_push(Dst, FAST, oparg);
@@ -2416,11 +2423,13 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_pop1_owned(Dst, arg2_idx);
             deferred_vs_apply_if_same_var(Dst, oparg);
             |.if ARCH==aarch64
-            JIT_ASSERT(0, ""); 
+                | ldr arg1, [f, #get_fastlocal_offset(oparg)]
+                | str arg2, [f, #get_fastlocal_offset(oparg)]
             |.else
-            | lea tmp, [f + get_fastlocal_offset(oparg)]
-            | mov arg1, [tmp]
-            | mov [tmp], arg2
+                | lea tmp, [f + get_fastlocal_offset(oparg)]
+                | mov arg1, [tmp]
+                | mov [tmp], arg2
+            |.endif
             if (Dst->known_defined[oparg]) {
                 emit_decref(Dst, arg1_idx, 0 /* don't preserve res */);
             } else {
@@ -2428,7 +2437,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             }
             if (ENABLE_DEFINED_TRACKING)
                 Dst->known_defined[oparg] = 1;
-            |.endif
             break;
 
         case DELETE_FAST:
@@ -2854,12 +2862,17 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case FOR_ITER:
             deferred_vs_peek_top_and_apply(Dst, arg1_idx);
             |.if ARCH==aarch64
-                JIT_ASSERT(0, ""); 
+                | ldr tmp, [arg1, #offsetof(PyObject, ob_type)]
+                | ldr tmp, [tmp, #offsetof(PyTypeObject, tp_iternext)]
+                | blr tmp
+                | cmp res, #0
+                | beq >1
             |.else
-            | mov tmp, [arg1 + offsetof(PyObject, ob_type)]
-            | call qword [tmp + offsetof(PyTypeObject, tp_iternext)]
-            | test res, res
-            | jz >1
+                | mov tmp, [arg1 + offsetof(PyObject, ob_type)]
+                | call qword [tmp + offsetof(PyTypeObject, tp_iternext)]
+                | test res, res
+                | jz >1
+            |.endif
 
             switch_section(Dst, SECTION_COLD);
             |1:
@@ -2869,7 +2882,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             switch_section(Dst, SECTION_CODE);
 
             deferred_vs_push(Dst, REGISTER, res_idx);
-            |.endif
+            
             break;
 
         case UNARY_POSITIVE:
