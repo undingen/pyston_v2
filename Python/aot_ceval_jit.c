@@ -844,9 +844,9 @@ static void emit_incref(Jit* Dst, int r_idx) {
     emit_inc_qword_ptr(Dst, &_Py_RefTotal, 0 /*=can't use tmp_reg*/);
 #endif
 |.if arch==aarch64
-    | ldr tmp, [Rx(r_idx)]
-    | add tmp, tmp, #1
-    | str tmp, [Rx(r_idx)]
+    | ldr tmp2, [Rx(r_idx)]
+    | add tmp2, tmp2, #1
+    | str tmp2, [Rx(r_idx)]
 |.else
     | add qword [Rq(r_idx)], 1
 |.endif
@@ -1457,9 +1457,19 @@ static void deferred_vs_push(Jit* Dst, int location, unsigned long value) {
     deferred_vs_push_no_assert(Dst, location, value);
 }
 
+static void deferred_vs_convert_reg_to_stack(Jit* Dst);
+
 // returns one of OWNED, BORROWED, or IMMORTAL based on the reference ownership status
 static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
     JIT_ASSERT(num >= 1, "");
+
+#if __aarch64__
+    // on arm 'res' and 'arg1' are the same register!
+    if (r_idx == res_idx && Dst->deferred_vs_res_used) {
+        deferred_vs_convert_reg_to_stack(Dst);
+    }
+
+#endif
 
     RefStatus ref_status = OWNED;
     if (Dst->deferred_vs_next >= num) {
@@ -1480,7 +1490,7 @@ static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
             // only generate mov if src and dst is different
             if (r_idx != entry->val) {
                 |.if arch==aarch64
-                    JIT_ASSERT(0, "");
+                    | mov Rx(r_idx), Rx(entry->val)
                 |.else
                     | mov Rq(r_idx), Rq(entry->val)
                 |.endif
@@ -1528,12 +1538,13 @@ static void deferred_vs_convert_reg_to_stack(Jit* Dst) {
         if (entry->val != res_idx)
             continue;
 
-        |.if arch==aarch64
-            JIT_ASSERT(0, "");
-        |.else
         // if we have 'vs_preserved_reg' available use it over a stack slot
         if (!Dst->deferred_vs_preserved_reg_used) {
-            | mov vs_preserved_reg, Rq(entry->val)
+            |.if arch==aarch64
+                | mov vs_preserved_reg, Rx(entry->val)
+            |.else
+                | mov vs_preserved_reg, Rq(entry->val)
+            |.endif
             entry->loc = REGISTER;
             entry->val = vs_preserved_reg_idx;
             Dst->deferred_vs_preserved_reg_used = 1;
@@ -1541,12 +1552,15 @@ static void deferred_vs_convert_reg_to_stack(Jit* Dst) {
             // have to use a stack slot
             if (Dst->num_deferred_stack_slots <= Dst->deferred_stack_slot_next)
                 ++Dst->num_deferred_stack_slots;
-            | mov [rsp + (Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8], res
+            |.if arch==aarch64
+                JIT_ASSERT(0, "");
+            |.else
+                | mov [rsp + (Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8], res
+            |.endif
             entry->loc = STACK;
             entry->val = Dst->deferred_stack_slot_next;
             ++Dst->deferred_stack_slot_next;
         }
-        |.endif
         JIT_ASSERT(Dst->deferred_vs_res_used, "");
         Dst->deferred_vs_res_used = 0;
         break; // finished only reg 'res' needs special handling
