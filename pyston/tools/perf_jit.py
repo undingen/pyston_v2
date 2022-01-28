@@ -5,6 +5,7 @@ import traceback
 import argparse
 import commands
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -23,7 +24,10 @@ def get_objdump(args):
                 continue
             addr, size, name = l
             if int(addr, 16) == start_addr:
-                p = subprocess.Popen(["objdump", "-b", "binary", "-m", "i386:x86-64", "-l", "-C", "-D", "/tmp/perf_map/" + name, "--adjust-vma=0x%s" % addr, "--no-show-raw"], stdout=subprocess.PIPE)
+                arch = platform.machine()
+                if arch == "x86-64":
+                    arch = "i386:x86-64"
+                p = subprocess.Popen(["objdump", "-b", "binary", "-m", arch, "-l", "-C", "-D", "/tmp/perf_map/" + name, "--adjust-vma=0x%s" % addr, "--no-show-raw"], stdout=subprocess.PIPE)
                 break
         else:
             raise Exception("Couldn't find address %s" % addr)

@@ -4491,13 +4491,17 @@ _PyEval_EvalFrame_AOT_JIT(PyFrameObject *f, PyThreadState * const tstate, PyObje
 
 continue_jit:
     {
+        //fprintf(stderr, "entering jit: %p\n", stack_pointer);
         JitRetVal ret = jit_code(f, tstate, stack_pointer);
         stack_pointer = ret.stack_pointer;
         int lower_bits = ret.ret_val & 3;
+        //fprintf(stderr, "jit ret: %d %p %p\n", lower_bits, ret.ret_val, stack_pointer);
         if (lower_bits == 0) {
             retval = (PyObject*)ret.ret_val;
-            if (retval)
+            if (retval){
+                //_PyObject_Dump(retval);
                 goto exit_returning;
+            }
             goto error;
         } else if (lower_bits == 1)
             goto exception_unwind;

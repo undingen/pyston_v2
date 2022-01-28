@@ -855,7 +855,9 @@ static void emit_incref(Jit* Dst, int r_idx) {
 static void emit_if_res_0_error(Jit* Dst) {
     JIT_ASSERT(Dst->deferred_vs_res_used == 0, "error this would not get decrefed");
 |.if arch==aarch64
-    | cbz res, ->error
+    //| cbz res, ->error
+    | cmp res, #0
+    | beq ->error
 |.else
     | test res, res
     | jz ->error
@@ -865,7 +867,9 @@ static void emit_if_res_0_error(Jit* Dst) {
 static void emit_if_res_32b_not_0_error(Jit* Dst) {
     JIT_ASSERT(Dst->deferred_vs_res_used == 0, "error this would not get decrefed");
 |.if arch==aarch64
-    | cbz Rw(res_idx), ->error
+    //| cbz Rw(res_idx), ->error
+    | cmp Rw(res_idx), #0
+    | beq ->error
 |.else
     | test Rd(res_idx), Rd(res_idx)
     | jnz ->error
@@ -919,7 +923,7 @@ static void emit_jg_to_bytecode_n(Jit* Dst, int num_bytes) {
 // moves a 32bit or 64bit immediate into a register uses smallest encoding
 static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.if arch==aarch64
-    if (val == 0) {
+    if (0 && val == 0) { // thinks this is acutally not faster
         | mov Rx(r_idx), xzr
         return;
     }
@@ -1004,13 +1008,15 @@ static void emit_call_ext_func(Jit* Dst, void* addr) {
     // WARNING: if you modify this you have to adopt SET_JIT_AOT_FUNC
 |.if arch==aarch64
 #if __aarch64__
-    emit_mov_imm(Dst, tmp2_idx, addr);
+    //emit_mov_imm(Dst, tmp2_idx, addr);
+    // we can't use 'emit_mov_imm' becasue we have to make sure
+    // that we always generate this 3 instructions because SET_JIT_AOT_FUNC is patching it later.
+    // encodes as: 0b11010010100xxxxxxxxxxxxxxxx00110 / 0xD2800006 | (addr&0xFFFF)<<5 
+    | mov tmp2, #(unsigned long)addr&UINT16_MAX
+    // encodes as: 0b11110010101xxxxxxxxxxxxxxxx00110 / 0xF2A00006 | (addr>>16)<<5
+    | movk tmp2, #((unsigned long)addr>>16)&UINT16_MAX, lsl #16
+    // encodes as: 0xD63F00C0
     | blr tmp2
-    static int counter;
-    ++counter;
-    for (int i=0; i<counter; ++i) {
-        |.nop
-    }
 #endif
 |.else
 #ifndef __aarch64__
@@ -1068,17 +1074,29 @@ static void emit_decref(Jit* Dst, int r_idx, int preserve_res) {
         |8:
     }
 
+    int already_saved = 0;
     if (r_idx != arg1_idx) { // setup the call argument
         |.if arch==aarch64
-            | mov Rx(arg1_idx), Rx(r_idx)
+#if __aarch64__
+            // on arm 'res' is same reg as 'arg1' so must carefully exchange the regs
+            if (preserve_res && r_idx == tmp_preserved_reg_idx) {
+                | mov tmp2, tmp_preserved_reg
+                | mov tmp_preserved_reg, res
+                | mov arg1, tmp2
+                already_saved = 1;
+            } else {
+                | mov Rx(arg1_idx), Rx(r_idx)
+            }
+#endif
         |.else
             | mov Rq(arg1_idx), Rq(r_idx)
         |.endif
     }
-    if (preserve_res) {
+
+    if (preserve_res && !already_saved) {
         | mov tmp_preserved_reg, res // save the result
     }
-
+    
     // inline _Py_Dealloc
     //  call_ext_func _Py_Dealloc
     |.if arch==aarch64
@@ -2094,6 +2112,9 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
     }
 
     // disable this for now
+    |nop
+    |nop
+    |nop
     return;
 
     // WARNING: if you adjust anything here check if you have to adjust jmp_to_inst_idx
@@ -2807,24 +2828,25 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case UNARY_INVERT:
         case GET_ITER:
         {
-            |.if ARCH==aarch64
-                JIT_ASSERT(0, ""); 
-            |.else
             RefStatus ref_status = deferred_vs_pop1(Dst, arg1_idx);
             deferred_vs_convert_reg_to_stack(Dst);
             void* func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
             emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
             if (opcode == UNARY_NOT) {
+                |.if ARCH==aarch64
+                    JIT_ASSERT(0, "");
+                |.else
                 | mov Rd(arg1_idx), Rd(res_idx) // save result for comparison
                 emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
                 | cmp Rd(arg1_idx), 0 // 32bit comparison!
                 | jl ->error // < 0, means error
                 | cmovne Rq(res_idx), Rq(tmp_idx)
                 // don't need to incref these are immortals
+                |.endif
             } else {
                 emit_if_res_0_error(Dst);
             }
-            |.endif
+            
             deferred_vs_push(Dst, REGISTER, res_idx);
             break;
         }
