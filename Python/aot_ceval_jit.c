@@ -987,14 +987,19 @@ static void emit_qword(Jit* Dst, unsigned long val_orig) {
 // of another register `other_idx` which contains a known value `other_addr`
 static void emit_mov_imm_or_lea(Jit* Dst, int r_idx, int other_idx, void* addr, void* other_addr) {
 |.if arch==aarch64
-    JIT_ASSERT(0, "");
+#ifdef __aarch64__
+    // TODO: can also use difference from previous const
+    emit_mov_imm(Dst, r_idx, (unsigned long)addr);
+#endif
 |.else
+#ifndef __aarch64__
     ptrdiff_t diff = (uintptr_t)addr - (uintptr_t)other_addr;
     if (!IS_32BIT_SIGNED_VAL((unsigned long)addr) && IS_32BIT_SIGNED_VAL(diff)) {
         | lea Rq(r_idx), [Rq(other_idx)+diff]
     } else {
         emit_mov_imm(Dst, r_idx, (unsigned long)addr);
     }
+#endif
 |.endif
 }
 
@@ -2766,9 +2771,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             if (wrote_inline_cache)
                 switch_section(Dst, SECTION_COLD);
 
-            |.if ARCH==aarch64
-                JIT_ASSERT(0, ""); 
-                |.else
             |1:
             | mov arg1, tstate
 
@@ -2782,11 +2784,15 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             if (opcode == CALL_METHOD) {
                 num_vs_args += 1;
 
+                |.if ARCH==aarch64
+                    JIT_ASSERT(0, ""); 
+                |.else
                 // this is taken from clang:
                 // meth = PEEK(oparg + 2);
                 // arg3 = ((meth == 0) ? 0 : 1) + oparg
                 | cmp qword [vsp - (8*num_vs_args)], 1
                 | sbb arg3, -1
+                |.endif
             }
             emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */));
             emit_adjust_vs(Dst, -num_vs_args);
@@ -2794,13 +2800,17 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             emit_if_res_0_error(Dst);
 
             if (wrote_inline_cache) {
+                |.if ARCH==aarch64
+                | b >2
+                |.else
                 | jmp >2
+                |.endif
                 switch_section(Dst, SECTION_CODE);
                 |2:
             }
 
             deferred_vs_push(Dst, REGISTER, res_idx);
-            |.endif
+            
             break;
 
         case FOR_ITER:
