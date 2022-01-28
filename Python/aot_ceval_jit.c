@@ -903,7 +903,7 @@ static void emit_je_to_bytecode_n(Jit* Dst, int num_bytes) {
     JIT_ASSERT(Dst->is_jmp_target[dst_idx], "calculate_jmp_targets needs adjustment");
     JIT_ASSERT(dst_idx >= 0 && dst_idx < Dst->num_opcodes, "");
 |.if arch==aarch64
-    | bne =>dst_idx
+    | beq =>dst_idx
 |.else
     | je =>dst_idx
 |.endif
@@ -1475,7 +1475,6 @@ static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
     if (r_idx == res_idx && Dst->deferred_vs_res_used) {
         deferred_vs_convert_reg_to_stack(Dst);
     }
-
 #endif
 
     RefStatus ref_status = OWNED;
@@ -1561,6 +1560,7 @@ static void deferred_vs_convert_reg_to_stack(Jit* Dst) {
                 ++Dst->num_deferred_stack_slots;
             |.if arch==aarch64
                 | str res, [sp, #(Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8]
+                |nop
             |.else
                 | mov [rsp + (Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8], res
             |.endif
@@ -1585,7 +1585,7 @@ static void deferred_vs_remove(Jit* Dst, int num_to_remove) {
         DeferredValueStackEntry* entry = &GET_DEFERRED[-i-1];
         if (entry->loc == STACK) {
             |.if arch==aarch64
-                JIT_ASSERT(0, "");
+                | str xzr, [sp, #(entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
             |.else
                 | mov qword [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8], 0
             |.endif
@@ -2423,8 +2423,11 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_pop1_owned(Dst, arg2_idx);
             deferred_vs_apply_if_same_var(Dst, oparg);
             |.if ARCH==aarch64
+#if __aarch64__
+                deferred_vs_convert_reg_to_stack(Dst); // we are using arg1 which is same as res
                 | ldr arg1, [f, #get_fastlocal_offset(oparg)]
                 | str arg2, [f, #get_fastlocal_offset(oparg)]
+#endif
             |.else
                 | lea tmp, [f + get_fastlocal_offset(oparg)]
                 | mov arg1, [tmp]
@@ -2467,9 +2470,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
         case POP_TOP:
         {
-            RefStatus ref_status = deferred_vs_pop1(Dst, arg1_idx);
+            RefStatus ref_status = deferred_vs_pop1(Dst, arg2_idx);
             if (ref_status == OWNED) {
-                emit_decref(Dst, arg1_idx, Dst->deferred_vs_res_used /*= preserve res */);
+                emit_decref(Dst, arg2_idx, Dst->deferred_vs_res_used /*= preserve res */);
             }
             break;
         }
