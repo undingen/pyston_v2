@@ -965,14 +965,19 @@ static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
 
 static void emit_cmp_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.if arch==aarch64
-    JIT_ASSERT(0, "");
+#if __aarch64__
+    emit_mov_imm(Dst, tmp_idx, val);
+    | cmp Rx(r_idx), tmp
+#endif
 |.else
+#ifndef __aarch64__
     if (IS_32BIT_VAL(val)) {
         | cmp Rq(r_idx), (unsigned int)val
     } else {
         | mov64 tmp, (unsigned long)val
         | cmp Rq(r_idx), tmp
     }
+#endif
 |.endif
 }
 
@@ -1700,24 +1705,32 @@ static void emit_jump_if_false(Jit* Dst, int oparg, RefStatus ref_status) {
     emit_je_to_bytecode_n(Dst, oparg);
     emit_cmp_imm(Dst, arg1_idx, (unsigned long)Py_True);
     |.if arch==aarch64
-        JIT_ASSERT(0, "");
+        | bne >1
     |.else
         | jne >1
-    
+    |.endif
 
     switch_section(Dst, SECTION_COLD);
     |1:
     void* func = jit_use_aot ? PyObject_IsTrueProfile : PyObject_IsTrue;
     emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
-    | cmp Rd(res_idx), 0
+    |.if arch==aarch64
+        | cmp Rw(res_idx), #0
+    |.else
+        | cmp Rd(res_idx), 0
+    |.endif
     emit_je_to_bytecode_n(Dst, oparg);
-    | jl ->error
-    | jmp >3
+    |.if arch==aarch64
+        | blt ->error
+        | b >3
+    |.else
+        | jl ->error
+        | jmp >3
+    |.endif
     switch_section(Dst, SECTION_CODE);
 
     |3:
     // continue here
-    |.endif
 }
 
 static void emit_jump_if_true(Jit* Dst, int oparg, RefStatus ref_status) {
@@ -1725,23 +1738,32 @@ static void emit_jump_if_true(Jit* Dst, int oparg, RefStatus ref_status) {
     emit_je_to_bytecode_n(Dst, oparg);
     emit_cmp_imm(Dst, arg1_idx, (unsigned long)Py_False);
     |.if arch==aarch64
-        JIT_ASSERT(0, "");
+        | bne >1
     |.else
-    | jne >1
+        | jne >1
+    |.endif
 
     switch_section(Dst, SECTION_COLD);
     |1:
     void* func = jit_use_aot ? PyObject_IsTrueProfile : PyObject_IsTrue;
     emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
-    | cmp Rd(res_idx), 0
+    |.if arch==aarch64
+        | cmp Rw(res_idx), #0
+    |.else
+        | cmp Rd(res_idx), 0
+    |.endif
     emit_jg_to_bytecode_n(Dst, oparg);
-    | jl ->error
-    | jmp >3
+    |.if arch==aarch64
+        | blt ->error
+        | b >3
+    |.else
+        | jl ->error
+        | jmp >3
+    |.endif
     switch_section(Dst, SECTION_CODE);
 
     |3:
     // continue here
-    |.endif
 }
 
 // returns 0 if IC generation succeeded
