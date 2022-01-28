@@ -1012,9 +1012,9 @@ static void emit_call_ext_func(Jit* Dst, void* addr) {
     // we can't use 'emit_mov_imm' becasue we have to make sure
     // that we always generate this 3 instructions because SET_JIT_AOT_FUNC is patching it later.
     // encodes as: 0b11010010100xxxxxxxxxxxxxxxx00110 / 0xD2800006 | (addr&0xFFFF)<<5 
-    | mov tmp2, #(unsigned long)addr&UINT16_MAX
+    | mov Rx(tmp2_idx), #(unsigned long)addr&UINT16_MAX
     // encodes as: 0b11110010101xxxxxxxxxxxxxxxx00110 / 0xF2A00006 | (addr>>16)<<5
-    | movk tmp2, #((unsigned long)addr>>16)&UINT16_MAX, lsl #16
+    | movk Rx(tmp2_idx), #((unsigned long)addr>>16)&UINT16_MAX, lsl #16
     // encodes as: 0xD63F00C0
     | blr tmp2
 #endif
@@ -1285,8 +1285,9 @@ static void* get_aot_func_addr(Jit* Dst, int opcode, int oparg, int opcache_avai
 static void emit_mov_inst_addr_to_tmp(Jit* Dst, int r_inst_idx) {
 |.if arch==aarch64
     | adr tmp, ->opcode_addr_begin // can only address +-1MB
-    | asr Rw(tmp2_idx), Rw(r_inst_idx), #1
-    | ldrsw tmp, [tmp, tmp2, lsl #2]
+    //| asr Rw(tmp2_idx), Rw(r_inst_idx), #1
+    //| ldrsw tmp, [tmp, tmp2, lsl #2]
+    | ldrsw tmp, [tmp, Rx(r_inst_idx), lsl #2]
 |.else
     // *2 instead of *4 because:
     // entries are 4byte wide addresses but lasti needs to be divided by 2
@@ -2111,12 +2112,13 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
 #endif // ENABLE_AVOID_SIG_TRACE_CHECK
     }
 
+/*
     // disable this for now
     |nop
     |nop
     |nop
     return;
-
+*/
     // WARNING: if you adjust anything here check if you have to adjust jmp_to_inst_idx
 
     // set opcode pointer. we do it before checking for signals to make deopt easier
