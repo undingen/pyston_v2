@@ -1395,7 +1395,9 @@ static void deferred_vs_emit(Jit* Dst) {
                 }
             } else if (entry->loc == STACK) {
                 |.if arch==aarch64
-                    JIT_ASSERT(0, "");
+                    | ldr tmp, [sp, #(entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
+                    | str xzr, [sp, #(entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
+                    | str tmp, [vsp, #8 * (i-1)]
                 |.else
                     | mov tmp, [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
                     | mov qword [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8], 0
@@ -1553,7 +1555,7 @@ static void deferred_vs_convert_reg_to_stack(Jit* Dst) {
             if (Dst->num_deferred_stack_slots <= Dst->deferred_stack_slot_next)
                 ++Dst->num_deferred_stack_slots;
             |.if arch==aarch64
-                JIT_ASSERT(0, "");
+                | str res, [sp, #(Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8]
             |.else
                 | mov [rsp + (Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8], res
             |.endif
@@ -3458,7 +3460,10 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // stack must be aligned which means it must be a uneven number of slots!
     // (because a call will push the return address to the stack which makes it aligned)
     unsigned long num_stack_slots = Dst->num_deferred_stack_slots + NUM_MANUAL_STACK_SLOTS;
-#ifndef __aarch64__
+#ifdef __aarch64__
+    if ((num_stack_slots & 1) != 0)
+        ++num_stack_slots;
+#else
     if ((num_stack_slots & 1) == 0)
         ++num_stack_slots;
 #endif
@@ -3593,13 +3598,15 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // second is the value stackpointer
     | mov res2, vsp
 
-    const int num_callee_saved = 6;
+    const int num_callee_saved = 8;
 
     |.if ARCH==aarch64
-        | ldp vs_preserved_reg, tmp_preserved_reg, [sp, #16]
-        | ldp f, tstate, [sp, #32]
-        | ldp vsp, interrupt, [sp, #48]
-        | ldp x29, x30, [sp], #((num_callee_saved + num_stack_slots)*8 + 16)
+        | add sp, sp, #(num_callee_saved+num_stack_slots)*8
+        | ldp x29, x30, [sp, #-16]
+        | ldp vs_preserved_reg, tmp_preserved_reg, [sp, #-32]
+        | ldp f, tstate, [sp, #-48]
+        | ldp vsp, interrupt, [sp, #-64]
+        
         | ret 
     |.else
         // remove stack variable
@@ -3624,10 +3631,11 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
     |.if ARCH==aarch64
         // callee saves
-        | stp x29, x30, [sp, #-((num_callee_saved + num_stack_slots)*8 + 16)]!
-        | stp vs_preserved_reg, tmp_preserved_reg, [sp, #16]
-        | stp f, tstate, [sp, #32]
-        | stp vsp, interrupt, [sp, #48]
+        | stp x29, x30, [sp, #-16]
+        | stp vs_preserved_reg, tmp_preserved_reg, [sp, #-32]
+        | stp f, tstate, [sp, #-48]
+        | stp vsp, interrupt, [sp, #-64]
+        | sub sp, sp, #(num_callee_saved+num_stack_slots)*8
 
         | mov f, arg1
         | mov tstate, arg2
