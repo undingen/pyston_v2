@@ -869,7 +869,7 @@ static void emit_if_res_32b_not_0_error(Jit* Dst) {
 |.if arch==aarch64
     //| cbz Rw(res_idx), ->error
     | cmp Rw(res_idx), #0
-    | beq ->error
+    | bne ->error
 |.else
     | test Rd(res_idx), Rd(res_idx)
     | jnz ->error
@@ -3811,7 +3811,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         // - this is fine our addresses are only 4 byte long not 8
         unsigned int* opcode_addr_begin = (unsigned int*)labels[lbl_opcode_addr_begin];
         int offset = dasm_getpclabel(Dst, inst_idx);
-        fprintf(stderr, "o(%p): %d %p\n", opcode_addr_begin, offset, mem + (unsigned int)offset);
+        //fprintf(stderr, "o(%p): %d %p\n", opcode_addr_begin, offset, mem + (unsigned int)offset);
         opcode_addr_begin[inst_idx] = (unsigned int)mem + (unsigned int)offset;
     }
 
@@ -3863,6 +3863,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                     addr, jmp_dst, inst_idx*2, get_opcode_name(opcode), oparg);
         }
     }
+
+    __builtin___clear_cache((char*)mem, &((char*)mem)[size]);
 
     ++jit_num_funcs;
     success = 1;

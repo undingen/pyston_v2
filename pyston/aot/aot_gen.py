@@ -1009,6 +1009,7 @@ def print_helper_funcs(f):
     print("        abort();\\", file=f)
     print("    ret_addr[-3] = 0xD2800006 | ((unsigned long)dst_addr&0xFFFF)<<5;\\", file=f)
     print("    ret_addr[-2] = 0xF2A00006 | ((unsigned long)dst_addr>>16)<<5;\\", file=f)
+    print("    __builtin___clear_cache(&ret_addr[-3], &ret_addr[-1]);\\", file=f)
     print("} while(0)", file=f)
     print("#else", file=f)
     print("#define SET_JIT_AOT_FUNC(dst_addr) do { \\", file=f)
