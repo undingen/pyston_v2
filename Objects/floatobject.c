@@ -117,9 +117,11 @@ PyFloat_GetInfo(void)
     return floatinfo;
 }
 
+long f_alloc;
 PyObject *
 PyFloat_FromDouble(double fval)
 {
+    ++f_alloc;
     PyFloatObject *op = free_list;
     if (op != NULL) {
         free_list = (PyFloatObject *) Py_TYPE(op);
@@ -218,9 +220,11 @@ PyFloat_FromString(PyObject *v)
     return result;
 }
 
+long f_dealloc;
 /* static */ void
 float_dealloc(PyFloatObject *op)
 {
+    ++f_dealloc;
     if (PyFloat_CheckExact(op)) {
         if (numfree >= PyFloat_MAXFREELIST)  {
             PyObject_FREE(op);

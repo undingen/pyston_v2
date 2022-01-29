@@ -1472,9 +1472,8 @@ static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
 
 #if __aarch64__
     // on arm 'res' and 'arg1' are the same register!
-    if (r_idx == res_idx && Dst->deferred_vs_res_used) {
+    if (r_idx == res_idx && Dst->deferred_vs_res_used)
         deferred_vs_convert_reg_to_stack(Dst);
-    }
 #endif
 
     RefStatus ref_status = OWNED;
@@ -1504,7 +1503,7 @@ static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
             ref_status = OWNED;
         } else if (entry->loc == STACK) {
             |.if arch==aarch64
-                JIT_ASSERT(0, "");
+                | ldr Rx(r_idx), [sp, #(entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
             |.else
                 | mov Rq(r_idx), [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
             |.endif
@@ -1642,6 +1641,19 @@ static void deferred_vs_peek_top_and_apply(Jit* Dst, int r_idx_top) {
 }
 
 static void deferred_vs_pop_n(Jit* Dst, int num, const int* const regs, RefStatus out_ref_status[]) {
+
+#if __aarch64__
+    // on arm 'res' and 'arg1' are the same register!
+    if (Dst->deferred_vs_res_used) {
+        for (int i=0; i<num; ++i) {
+            if (regs[i] == res_idx) {
+                deferred_vs_convert_reg_to_stack(Dst);
+                break;
+            }
+        }
+    }
+#endif
+
     for (int i=0; i<num; ++i) {
         out_ref_status[i] = deferred_vs_peek(Dst, regs[i], i+1);
     }
@@ -2344,6 +2356,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         _Py_CODEUNIT word = Dst->first_instr[inst_idx];
         int opcode = _Py_OPCODE(word);
         int oparg = _Py_OPARG(word);
+
+        fprintf(stderr, "O %d\n", inst_idx);
 
         // this is used for the special EXTENDED_ARG opcode
         oparg |= oldoparg;
