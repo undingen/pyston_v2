@@ -696,8 +696,10 @@ static unsigned long jit_stat_load_global_hit, jit_stat_load_global_miss, jit_st
 | define_reg arg6, arg6_idx, r9,  9, x5, 5 // careful same as register 'tmp'
 
 // return values
-| define_reg res,  res_idx,  rax, 0, x0, 0
+| define_reg res,  res_idx,  rax, 0, x7, 7 // on arm this is a dummy reg
 | define_reg res2, res2_idx, rdx, 2, x1, 1 // second return value
+
+| define_reg real_res, real_res_idx, rax, 0, x0, 0
 
 // will be used by macros
 |.define tmp, arg6
@@ -1027,6 +1029,7 @@ static void emit_call_ext_func(Jit* Dst, void* addr) {
     | movk Rx(tmp2_idx), #((unsigned long)addr>>16)&UINT16_MAX, lsl #16
     // encodes as: 0xD63F00C0
     | blr tmp2
+    | mov res, real_res
 #endif
 |.else
 #ifndef __aarch64__
@@ -2581,6 +2584,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_pop1_owned(Dst, res_idx);
             deferred_vs_apply(Dst);
             |.if ARCH==aarch64
+                | mov real_res, res
                 | b ->return
             |.else
                 | jmp ->return
@@ -2882,6 +2886,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 | ldr tmp, [arg1, #offsetof(PyObject, ob_type)]
                 | ldr tmp, [tmp, #offsetof(PyTypeObject, tp_iternext)]
                 | blr tmp
+                | mov res, real_res
                 | cmp res, #0
                 | beq >1
             |.else
@@ -3525,7 +3530,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     |->epilog:
     // TODO: only emit a label if we actually generated an instruction which needs it
     |->exception_unwind:
-    emit_mov_imm(Dst, res_idx, 1);
+    emit_mov_imm(Dst, real_res_idx, 1);
     |.if ARCH==aarch64
         | b ->return
     |.else
@@ -3535,10 +3540,10 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     |->exit_yielding:
     // to differentiate from a normal return we set the second lowest bit
     |.if ARCH==aarch64
-        | orr res, res, #2
+        | orr real_res, res, #2
         | b ->return
     |.else
-        | or res, 2
+        | or real_res, 2
         | jmp ->return
     |.endif
 
@@ -3608,11 +3613,11 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // falltrough
 
     |->deopt_return_new_line:
-    emit_mov_imm(Dst, res_idx, (1 << 2) /* this means first trace check for this line */ | 3 /*= deopt */);
+    emit_mov_imm(Dst, real_res_idx, (1 << 2) /* this means first trace check for this line */ | 3 /*= deopt */);
     | jmp ->return
 
     |->deopt_return:
-    emit_mov_imm(Dst, res_idx, 3 /*= deopt */);
+    emit_mov_imm(Dst, real_res_idx, 3 /*= deopt */);
     | jmp ->return
     |.endif
 
@@ -3643,7 +3648,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         emit_xdecref_arg1(Dst);
     }
 
-    emit_mov_imm(Dst, res_idx, 0);
+    emit_mov_imm(Dst, real_res_idx, 0);
 
     |->return:
     // ret value one must already be set
