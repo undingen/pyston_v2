@@ -1298,9 +1298,8 @@ static void* get_aot_func_addr(Jit* Dst, int opcode, int oparg, int opcache_avai
 static void emit_mov_inst_addr_to_tmp(Jit* Dst, int r_inst_idx) {
 |.if arch==aarch64
     | adr tmp, ->opcode_addr_begin // can only address +-1MB
-    //| asr Rw(tmp2_idx), Rw(r_inst_idx), #1
-    //| ldrsw tmp, [tmp, tmp2, lsl #2]
-    | ldrsw tmp, [tmp, Rx(r_inst_idx), lsl #2]
+    | asr Rw(tmp2_idx), Rw(r_inst_idx), #1
+    | ldrsw tmp, [tmp, tmp2, lsl #2]
 |.else
     // *2 instead of *4 because:
     // entries are 4byte wide addresses but lasti needs to be divided by 2
@@ -1562,7 +1561,6 @@ static void deferred_vs_convert_reg_to_stack(Jit* Dst) {
                 ++Dst->num_deferred_stack_slots;
             |.if arch==aarch64
                 | str res, [sp, #(Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8]
-                |nop
             |.else
                 | mov [rsp + (Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8], res
             |.endif
@@ -2359,8 +2357,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         _Py_CODEUNIT word = Dst->first_instr[inst_idx];
         int opcode = _Py_OPCODE(word);
         int oparg = _Py_OPARG(word);
-
-        fprintf(stderr, "O %d\n", inst_idx);
 
         // this is used for the special EXTENDED_ARG opcode
         oparg |= oldoparg;
