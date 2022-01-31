@@ -1007,6 +1007,25 @@ static void emit_store64_vsp_offset_imm(Jit* Dst, long offset, unsigned long val
     emit_mov_imm(Dst, tmp_idx, val);
     emit_store64_vsp_offset(Dst, tmp_idx, offset);
 }
+static void emit_store64_sp_offset_imm(Jit* Dst, long offset, unsigned long val) {
+|.if arch==aarch64
+#ifdef __aarch64__
+    if (val == 0) {
+        | str xzr, [sp, #offset]
+        return;
+    }
+#endif
+|.else
+#ifndef __aarch64__
+    if (IS_32BIT_VAL(val)) {
+        | mov qword [sp + offset], (unsigned int)val
+        return;
+    }
+#endif
+|.endif
+    emit_mov_imm(Dst, tmp_idx, val);
+    emit_store64_sp_offset(Dst, tmp_idx, offset);
+}
 
 static void emit_cmp_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.if arch==aarch64
@@ -1375,13 +1394,8 @@ static void deferred_vs_emit(Jit* Dst) {
                 }
             } else if (entry->loc == STACK) {
                 emit_load64_sp_offset(Dst, tmp_idx, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8);
-                |.if arch==aarch64
-                    | str xzr, [sp, #(entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
-                    | str tmp, [vsp, #8 * (i-1)]
-                |.else
-                    | mov qword [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8], 0
-                    | mov [vsp+ 8 * (i-1)], tmp
-                |.endif
+                emit_store64_sp_offset_imm(Dst, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8, 0 /* = value */);
+                emit_store64_vsp_offset(Dst, tmp_idx, 8 * (i-1));
             } else {
                 JIT_ASSERT(0, "entry->loc not implemented");
             }
@@ -1540,11 +1554,7 @@ static void deferred_vs_remove(Jit* Dst, int num_to_remove) {
     for (int i=0; i < num_to_remove && Dst->deferred_vs_next > i; ++i) {
         DeferredValueStackEntry* entry = &GET_DEFERRED[-i-1];
         if (entry->loc == STACK) {
-            |.if arch==aarch64
-                | str xzr, [sp, #(entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
-            |.else
-                | mov qword [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8], 0
-            |.endif
+            emit_store64_sp_offset_imm(Dst, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8, 0/*= value */);
             if (Dst->deferred_stack_slot_next-1 == entry->val)
                 --Dst->deferred_stack_slot_next;
         } else if (entry->loc == REGISTER) {
@@ -3727,11 +3737,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // we clear it so in case of error we can just decref this space
     emit_mov_imm(Dst, vs_preserved_reg_idx, 0);
     for (int i=0; i<Dst->num_deferred_stack_slots; ++i) {
-        |.if ARCH==aarch64
-            | str xzr, [sp, #(NUM_MANUAL_STACK_SLOTS + i) * 8]
-        |.else
-            | mov qword [rsp + (NUM_MANUAL_STACK_SLOTS + i) * 8], 0
-        |.endif
+        emit_store64_sp_offset_imm(Dst, (NUM_MANUAL_STACK_SLOTS + i) * 8, 0 /* =value */);
     }
 
     // jumps either to first opcode implementation or resumes a generator
