@@ -2915,14 +2915,22 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
             if (opcode == UNARY_NOT) {
                 |.if ARCH==aarch64
-                    JIT_ASSERT(0, "");
+                #if __aarch64__
+                    emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
+                    | cmp Rw(arg1_idx), #0 // 32bit comparison!
+                    | blt ->error // < 0, means error
+                    | csel res, arg3, arg4, eq
+                    // don't need to incref these are immortals
+                #endif
                 |.else
-                | mov Rd(arg1_idx), Rd(res_idx) // save result for comparison
-                emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
-                | cmp Rd(arg1_idx), 0 // 32bit comparison!
-                | jl ->error // < 0, means error
-                | cmovne Rq(res_idx), Rq(tmp_idx)
-                // don't need to incref these are immortals
+                #ifndef __aarch64__
+                    | mov Rd(arg1_idx), Rd(res_idx) // save result for comparison
+                    emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
+                    | cmp Rd(arg1_idx), 0 // 32bit comparison!
+                    | jl ->error // < 0, means error
+                    | cmovne Rq(res_idx), Rq(tmp_idx)
+                    // don't need to incref these are immortals
+                #endif
                 |.endif
             } else {
                 emit_if_res_0_error(Dst);
@@ -3077,9 +3085,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             RefStatus ref_status = deferred_vs_pop1(Dst, arg3_idx);
             deferred_vs_convert_reg_to_stack(Dst);
             |.if ARCH==aarch64
-                JIT_ASSERT(0, "");
+                | ldr arg1, [f, #offsetof(PyFrameObject, f_globals)]
             |.else
-            | mov arg1, [f + offsetof(PyFrameObject, f_globals)]
+                | mov arg1, [f + offsetof(PyFrameObject, f_globals)]
             |.endif
             emit_mov_imm(Dst, arg2_idx, (unsigned long)PyTuple_GET_ITEM(Dst->co_names, oparg));
             emit_call_decref_args1(Dst, PyDict_SetItem, arg3_idx, &ref_status);
@@ -3125,25 +3133,33 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             emit_call_ext_func(Dst, opcode == BUILD_LIST ? PyList_New : PyTuple_New_Nonzeroed);
             emit_if_res_0_error(Dst);
             if (oparg) {
-                |.if ARCH==aarch64
-                    JIT_ASSERT(0, "");
-                |.else
                 // PyTupleObject stores the elements directly inside the object
                 // while PyListObject has ob_item which points to an array of elements to support resizing.
                 if (opcode == BUILD_LIST) {
-                    | mov arg2, [res + offsetof(PyListObject, ob_item)]
+                    |.if ARCH==aarch64
+                        | ldr arg2, [res, #offsetof(PyListObject, ob_item)]
+                    |.else
+                        | mov arg2, [res + offsetof(PyListObject, ob_item)]
+                    |.endif
                 }
                 int i = oparg;
                 while (--i >= 0) {
                     deferred_vs_peek_owned(Dst, arg1_idx, (oparg - i));
                     if (opcode == BUILD_LIST) {
-                        | mov [arg2 + 8*i], arg1
+                        |.if ARCH==aarch64
+                            | str arg1, [arg2, #8*i]
+                        |.else
+                            | mov [arg2 + 8*i], arg1
+                        |.endif
                     } else {
-                        | mov [res + offsetof(PyTupleObject, ob_item) + 8*i], arg1
+                        |.if ARCH==aarch64
+                            | str arg1, [res, #offsetof(PyTupleObject, ob_item) + 8*i]
+                        |.else
+                            | mov [res + offsetof(PyTupleObject, ob_item) + 8*i], arg1
+                        |.endif
                     }
                 }
                 deferred_vs_remove(Dst, oparg);
-                |.endif
             }
             deferred_vs_push(Dst, REGISTER, res_idx);
             break;
