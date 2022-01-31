@@ -190,7 +190,7 @@ typedef struct Jit {
 #define Dst_REF Dst->d
 
 #include <dynasm/dasm_proto.h>
-#if __aarch64__
+#ifdef __aarch64__
 #include <dynasm/dasm_arm64.h>
 #else
 #include <dynasm/dasm_x86.h>
@@ -737,7 +737,7 @@ static void switch_section(Jit* Dst, Section new_section) {
 // moves the value stack pointer by num_values python objects
 static void emit_adjust_vs(Jit* Dst, int num_values) {
 |.if arch==aarch64
-#if __aarch64__
+#ifdef __aarch64__
     if (num_values > 0) {
         | add vsp, vsp, #8*num_values
     } else if (num_values < 0) {
@@ -778,8 +778,9 @@ static void emit_pop_v(Jit* Dst, int r_idx) {
 static void emit_read_vs(Jit* Dst, int r_idx, int stack_offset) {
     deferred_vs_apply(Dst);
 |.if arch==aarch64
-    | sub tmp, vsp, #8*stack_offset
-    | ldr Rx(r_idx), [tmp]
+    //| sub tmp, vsp, #8*stack_offset
+    //| ldr Rx(r_idx), [tmp]
+    | ldr Rx(r_idx), [vsp, #8*stack_offset]
 |.else
     | mov Rq(r_idx), [vsp - (8*stack_offset)]
 |.endif
@@ -788,8 +789,9 @@ static void emit_read_vs(Jit* Dst, int r_idx, int stack_offset) {
 static void emit_write_vs(Jit* Dst, int r_idx, int stack_offset) {
     deferred_vs_apply(Dst);
 |.if arch==aarch64
-    | sub tmp, vsp, #8*stack_offset
-    | str Rx(r_idx), [tmp]
+    //| sub tmp, vsp, #8*stack_offset
+    //| str Rx(r_idx), [tmp]
+    | str Rx(r_idx), [vsp, #8*stack_offset]
 |.else
     | mov [vsp - (8*stack_offset)], Rq(r_idx)
 |.endif
@@ -922,9 +924,21 @@ static void emit_jg_to_bytecode_n(Jit* Dst, int num_bytes) {
 |.endif
 }
 
+// moves a 64bit register from on to the other
+static void emit_mov64_reg(Jit* Dst, int r_dst, int r_src) {
+    if (r_dst == r_src)
+        return;
+    |.if arch==aarch64
+        | mov Rx(r_dst), Rx(r_src)
+    |.else
+        | mov Rq(r_dst), Rq(r_src)
+    |.endif
+}
+
 // moves a 32bit or 64bit immediate into a register uses smallest encoding
 static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.if arch==aarch64
+#ifdef __aarch64__
     if (0 && val == 0) { // thinks this is acutally not faster
         | mov Rx(r_idx), xzr
         return;
@@ -939,7 +953,9 @@ static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
     if ((val >> 48) & UINT16_MAX) {
         | movk Rx(r_idx), #(val >> 48) & UINT16_MAX, lsl #48
     }
+#endif
 |.else
+#ifndef __aarch64__
     if (val == 0) {
         | xor Rd(r_idx), Rd(r_idx)
     } else if (IS_32BIT_VAL(val)) {
@@ -947,8 +963,28 @@ static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
     } else {
         | mov64 Rq(r_idx), (unsigned long)val
     }
+#endif
 |.endif
 }
+
+// load a 64bit value relative to current SP into register
+static void emit_load64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
+|.if arch==aarch64
+    | ldr Rx(r_dst), [sp, #offset_in_bytes]
+|.else
+    | mov Rq(r_dst), [rsp + offset_in_bytes]
+|.endif
+}
+
+// store a 64bit value from register into SP relative memory location
+static void emit_store64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
+|.if arch==aarch64
+    | str Rx(r_dst), [sp, #offset_in_bytes]
+|.else
+    | mov [sp + offset_in_bytes], Rq(r_dst)
+|.endif
+}
+
 
 // moves a 32bit or 64bit immediate into a 64 bit memory location uses smallest encoding
 // because of a limitation of DynASM this has to be a macro an not a C function
@@ -967,9 +1003,18 @@ static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
 
 static void emit_cmp_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.if arch==aarch64
-#if __aarch64__
-    emit_mov_imm(Dst, tmp_idx, val);
-    | cmp Rx(r_idx), tmp
+#ifdef __aarch64__
+    if (abs(val) < 4096) {
+        JIT_ASSERT(0, "not tested yet");
+        if (val < 0) {
+            | cmn Rx(r_idx), #abs(val)
+        } else {
+            | cmp Rx(r_idx), #abs(val)
+        }
+    } else {
+        emit_mov_imm(Dst, tmp_idx, val);
+        | cmp Rx(r_idx), tmp
+    }
 #endif
 |.else
 #ifndef __aarch64__
@@ -982,13 +1027,6 @@ static void emit_cmp_imm(Jit* Dst, int r_idx, unsigned long val) {
 #endif
 |.endif
 }
-
-static void emit_qword(Jit* Dst, unsigned long val_orig) {
-    for (unsigned long val = val_orig, i=0; i<8; ++i, val >>= 8) {
-        //|.byte val & 0xFF
-    }
-}
-
 
 // Loads a register `r_idx` with a value `addr`, potentially doing a lea
 // of another register `other_idx` which contains a known value `other_addr`
@@ -1028,10 +1066,10 @@ static void emit_mov_imm2(Jit* Dst, int r_idx1, void* addr1, int r_idx2, void* a
 static void emit_call_ext_func(Jit* Dst, void* addr) {
     // WARNING: if you modify this you have to adopt SET_JIT_AOT_FUNC
 |.if arch==aarch64
-#if __aarch64__
-    //emit_mov_imm(Dst, tmp2_idx, addr);
-    // we can't use 'emit_mov_imm' becasue we have to make sure
-    // that we always generate this 3 instructions because SET_JIT_AOT_FUNC is patching it later.
+#ifdef __aarch64__
+    JIT_ASSERT(IS_32BIT_VAL((long)addr), "does not fit in 32bit");
+    // we can't use 'emit_mov_imm' because we have to make sure
+    // that we always generate this 3 instruction sequence because SET_JIT_AOT_FUNC is patching it later.
     // encodes as: 0b11010010100xxxxxxxxxxxxxxxx00110 / 0xD2800006 | (addr&0xFFFF)<<5
     | mov Rx(tmp2_idx), #(unsigned long)addr&UINT16_MAX
     // encodes as: 0b11110010101xxxxxxxxxxxxxxxx00110 / 0xF2A00006 | (addr>>16)<<5
@@ -1097,27 +1135,11 @@ static void emit_decref(Jit* Dst, int r_idx, int preserve_res) {
     }
 
     int already_saved = 0;
-    if (r_idx != arg1_idx) { // setup the call argument
-        |.if arch==aarch64
-#if __aarch64__
-            // on arm 'res' is same reg as 'arg1' so must carefully exchange the regs
-            if (0 && preserve_res && r_idx == tmp_preserved_reg_idx) {
-                | mov tmp2, tmp_preserved_reg
-                | mov tmp_preserved_reg, res
-                | mov arg1, tmp2
-                already_saved = 1;
-            } else {
-                | mov Rx(arg1_idx), Rx(r_idx)
-            }
-#endif
-        |.else
-            | mov Rq(arg1_idx), Rq(r_idx)
-        |.endif
-    }
+    if (r_idx != arg1_idx) // setup the call argument
+        emit_mov64_reg(Dst, arg1_idx, r_idx);
 
-    if (preserve_res && !already_saved) {
-        | mov tmp_preserved_reg, res // save the result
-    }
+    if (preserve_res && !already_saved)
+        emit_mov64_reg(Dst, tmp_preserved_reg_idx, res_idx); // save the result
 
     // inline _Py_Dealloc
     //  call_ext_func _Py_Dealloc
@@ -1130,9 +1152,8 @@ static void emit_decref(Jit* Dst, int r_idx, int preserve_res) {
         | call qword [res + offsetof(PyTypeObject, tp_dealloc)]
     |.endif
 
-    if (preserve_res) {
-        | mov res, tmp_preserved_reg
-    }
+    if (preserve_res)
+        emit_mov64_reg(Dst, res_idx, tmp_preserved_reg_idx);
 
     if (use_inline_decref) {
         |8:
@@ -1157,17 +1178,15 @@ static void emit_decref2(Jit* Dst, int r_idx, int r_idx2, int preserve_res) {
         STACK_SLOT,
     } LocationOfVar2;
 
-|.if arch==aarch64
-    JIT_ASSERT(0, "");
-|.else
+
     if (!preserve_res) { // if we don't need to preserve the result, we can store the second var to decref where we would store it (tmp_preserved_reg)
-        | mov tmp_preserved_reg, Rq(r_idx2)
+        emit_mov64_reg(Dst, tmp_preserved_reg_idx, r_idx2);
         LocationOfVar2 = TMP_REG;
     } else if (can_use_vs_preserved_reg) { // we have the second preserved register available use it
-        | mov vs_preserved_reg, Rq(r_idx2)
+        emit_mov64_reg(Dst, vs_preserved_reg_idx, r_idx2);
         LocationOfVar2 = VS_REG;
     } else { // have to use the stack
-        | mov [rsp + 0 /* stack slot */ ], Rq(r_idx2)
+        emit_store64_sp_offset(Dst, r_idx2, 0 /* stack slot */);
         LocationOfVar2 = STACK_SLOT;
     }
     emit_decref(Dst, r_idx, preserve_res);
@@ -1177,10 +1196,9 @@ static void emit_decref2(Jit* Dst, int r_idx, int r_idx2, int preserve_res) {
         emit_decref(Dst, vs_preserved_reg_idx, preserve_res);
         emit_mov_imm(Dst, vs_preserved_reg_idx, 0); // we have to clear it because error path will xdecref
     } else {
-        | mov arg1, [rsp + 0 /* stack slot */]
+        emit_load64_sp_offset(Dst, arg1_idx, 0 /* stack slot */);
         emit_decref(Dst, arg1_idx, preserve_res);
     }
-|.endif
 }
 
 static void emit_xdecref_arg1(Jit* Dst) {
@@ -1209,20 +1227,18 @@ static void emit_call_decref_args(Jit* Dst, void* func, int num, int regs[], Ref
     //   - stack slot
     const int can_use_vs_preserved_reg = Dst->deferred_vs_preserved_reg_used == 0;
 
-|.if arch==aarch64
-#ifdef __aarch64__
     for (int i=0, num_owned = 0; i<num; ++i) {
         if (ref_status[i] != OWNED)
             continue;
         if (num_owned == 0) {
-            | mov tmp_preserved_reg, Rx(regs[i])
+            emit_mov64_reg(Dst, tmp_preserved_reg_idx, regs[i]);
         } else if (num_owned == 1 && can_use_vs_preserved_reg) {
-            | mov vs_preserved_reg, Rx(regs[i])
+            emit_mov64_reg(Dst, vs_preserved_reg_idx, regs[i]);
         } else {
             int stack_slot = num_owned - can_use_vs_preserved_reg -1;
             // this should never happen if it does adjust NUM_MANUAL_STACK_SLOTS
             JIT_ASSERT(stack_slot < NUM_MANUAL_STACK_SLOTS, "");
-            | str Rx(regs[i]), [sp, #stack_slot*8]
+            emit_store64_sp_offset(Dst, regs[i], stack_slot*8);
         }
         ++num_owned;
     }
@@ -1241,51 +1257,11 @@ static void emit_call_decref_args(Jit* Dst, void* func, int num, int regs[], Ref
             int stack_slot = num_decref - can_use_vs_preserved_reg -1;
             // this should never happen if it does adjust NUM_MANUAL_STACK_SLOTS
             JIT_ASSERT(stack_slot < NUM_MANUAL_STACK_SLOTS, "");
-            | ldr arg1, [sp, #stack_slot*8]
+            emit_load64_sp_offset(Dst, arg1_idx, stack_slot*8);
             emit_decref(Dst, arg1_idx, 1); /*= preserve res */
         }
         ++num_decref;
     }
-#endif
-|.else
-#ifndef __aarch64__
-    for (int i=0, num_owned = 0; i<num; ++i) {
-        if (ref_status[i] != OWNED)
-            continue;
-        if (num_owned == 0) {
-            | mov tmp_preserved_reg, Rq(regs[i])
-        } else if (num_owned == 1 && can_use_vs_preserved_reg) {
-            | mov vs_preserved_reg, Rq(regs[i])
-        } else {
-            int stack_slot = num_owned - can_use_vs_preserved_reg -1;
-            // this should never happen if it does adjust NUM_MANUAL_STACK_SLOTS
-            JIT_ASSERT(stack_slot < NUM_MANUAL_STACK_SLOTS, "");
-            | mov [rsp + stack_slot*8], Rq(regs[i])
-        }
-        ++num_owned;
-    }
-
-    emit_call_ext_func(Dst, func);
-
-    for (int i=0, num_decref=0; i<num; ++i) {
-        if (ref_status[i] != OWNED)
-            continue;
-        if (num_decref == 0) {
-            emit_decref(Dst, tmp_preserved_reg_idx, 1); /*= preserve res */
-        } else if (num_decref == 1 && can_use_vs_preserved_reg) {
-            emit_decref(Dst, vs_preserved_reg_idx, 1); /*= preserve res */
-            emit_mov_imm(Dst, vs_preserved_reg_idx, 0); // we have to clear it because error path will xdecref
-        } else {
-            int stack_slot = num_decref - can_use_vs_preserved_reg -1;
-            // this should never happen if it does adjust NUM_MANUAL_STACK_SLOTS
-            JIT_ASSERT(stack_slot < NUM_MANUAL_STACK_SLOTS, "");
-            | mov arg1, [rsp + stack_slot*8]
-            emit_decref(Dst, arg1_idx, 1); /*= preserve res */
-        }
-        ++num_decref;
-    }
-#endif
-|.endif
 }
 static void emit_call_decref_args1(Jit* Dst, void* func, int r1_idx, RefStatus ref_status[]) {
     int regs[] = { r1_idx };
@@ -1481,7 +1457,7 @@ static void deferred_vs_convert_reg_to_stack(Jit* Dst);
 static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
     JIT_ASSERT(num >= 1, "");
 
-#if __aarch64__
+#ifdef __aarch64__
     // on arm 'res' and 'arg1' are the same register!
     if (r_idx == res_idx && Dst->deferred_vs_res_used)
         deferred_vs_convert_reg_to_stack(Dst);
@@ -1652,7 +1628,7 @@ static void deferred_vs_peek_top_and_apply(Jit* Dst, int r_idx_top) {
 
 static void deferred_vs_pop_n(Jit* Dst, int num, const int* const regs, RefStatus out_ref_status[]) {
 
-#if __aarch64__
+#ifdef __aarch64__
     // on arm 'res' and 'arg1' are the same register!
     if (Dst->deferred_vs_res_used) {
         for (int i=0; i<num; ++i) {
@@ -2310,7 +2286,7 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
 __attribute__((optimize("-O0"))) // enable to make "source tools/dis_jit_gdb.py" work
 #endif
 void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
-#if __aarch64__
+#ifdef __aarch64__
     if (memcmp(PyUnicode_AsUTF8(co->co_name), "armjit", 6) != 0)
         // disable JIT on ARM
         return NULL;
@@ -2445,7 +2421,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_pop1_owned(Dst, arg2_idx);
             deferred_vs_apply_if_same_var(Dst, oparg);
             |.if ARCH==aarch64
-#if __aarch64__
+#ifdef __aarch64__
                 //deferred_vs_convert_reg_to_stack(Dst); // we are using arg1 which is same as res
                 | ldr arg1, [f, #get_fastlocal_offset(oparg)]
                 | str arg2, [f, #get_fastlocal_offset(oparg)]
@@ -2468,7 +2444,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         {
             deferred_vs_apply_if_same_var(Dst, oparg);
             |.if ARCH==aarch64
-#if __aarch64__
+#ifdef __aarch64__
                 | ldr arg2, [f, #get_fastlocal_offset(oparg)]
                 if (!Dst->known_defined[oparg] /* can be null */) {
                     | cmp arg2, #0
@@ -2662,7 +2638,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             }
             if (opcode == COMPARE_OP && (oparg == PyCmp_IS || oparg == PyCmp_IS_NOT)) {
                 |.if ARCH==aarch64
-                #if __aarch64__
+                #ifdef __aarch64__
                     emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
                     | cmp arg1, arg2
                     if (oparg == PyCmp_IS) {
@@ -2950,7 +2926,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
             if (opcode == UNARY_NOT) {
                 |.if ARCH==aarch64
-                #if __aarch64__
+                #ifdef __aarch64__
                     emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
                     | cmp Rw(arg1_idx), #0 // 32bit comparison!
                     | blt ->error // < 0, means error
@@ -3487,10 +3463,11 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                     // res == 2 means goto exit_yielding
                     emit_if_res_0_error(Dst);
                     |.if ARCH==aarch64
-                        JIT_ASSERT(0, "");
+                        | cmp res, #1
+                        | bne ->exit_yielding
                     |.else
-                    | cmp res, 1
-                    | jne ->exit_yielding
+                        | cmp res, 1
+                        | jne ->exit_yielding
                     |.endif
                     break;
 
