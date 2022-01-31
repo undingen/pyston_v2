@@ -988,19 +988,25 @@ static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
 }
 
 // moves a 32bit or 64bit immediate into a 64 bit memory location uses smallest encoding
-// because of a limitation of DynASM this has to be a macro an not a C function
-|.macro mov_mem64_imm, mem, val
+static void emit_store64_vsp_offset_imm(Jit* Dst, long offset, unsigned long val) {
 |.if arch==aarch64
-||   JIT_ASSERT(0, "");
+#ifdef __aarch64__
+    if (val == 0) {
+        | str xzr, [vsp, #offset]
+        return;
+    }
+#endif
 |.else
-|| if (IS_32BIT_VAL(val)) {
-|       mov qword mem, (unsigned int)val
-|| } else {
-||      emit_mov_imm(Dst, tmp_idx, val);
-|       mov qword mem, tmp
-|| }
+#ifndef __aarch64__
+    if (IS_32BIT_VAL(val)) {
+        | mov qword [vsp + offset], (unsigned int)val
+        return;
+    }
+#endif
 |.endif
-|.endmacro
+    emit_mov_imm(Dst, tmp_idx, val);
+    emit_store64_vsp_offset(Dst, tmp_idx, offset);
+}
 
 static void emit_cmp_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.if arch==aarch64
@@ -1028,30 +1034,32 @@ static void emit_cmp_imm(Jit* Dst, int r_idx, unsigned long val) {
 // Loads a register `r_idx` with a value `addr`, potentially doing a lea
 // of another register `other_idx` which contains a known value `other_addr`
 static void emit_mov_imm_using_diff(Jit* Dst, int r_idx, int other_idx, void* addr, void* other_addr) {
-|.if arch==aarch64
-#ifdef __aarch64__
     ptrdiff_t diff = (uintptr_t)addr - (uintptr_t)other_addr;
     if (diff == 0) {
-        | mov Rx(r_idx), Rx(other_idx)
-    } else if (labs(diff) < 4096) {
+        emit_mov64_reg(Dst, r_idx, other_idx);
+        return;
+    }
+
+|.if arch==aarch64
+#ifdef __aarch64__
+    if (labs(diff) < 4096) {
         if (addr > other_addr) {
             | add Rx(r_idx), Rx(other_idx), #labs(diff)
         } else {
             | sub Rx(r_idx), Rx(other_idx), #labs(diff)
         }
-    } else
-        emit_mov_imm(Dst, r_idx, (unsigned long)addr);
+        return;
+    }
 #endif
 |.else
 #ifndef __aarch64__
-    ptrdiff_t diff = (uintptr_t)addr - (uintptr_t)other_addr;
     if (!IS_32BIT_SIGNED_VAL((unsigned long)addr) && IS_32BIT_SIGNED_VAL(diff)) {
         | lea Rq(r_idx), [Rq(other_idx)+diff]
-    } else {
-        emit_mov_imm(Dst, r_idx, (unsigned long)addr);
+        return;
     }
 #endif
 |.endif
+    emit_mov_imm(Dst, r_idx, (unsigned long)addr);
 }
 
 // sets register r_idx1 = addr1 and r_idx2 = addr2. Uses a lea if beneficial.
@@ -1341,24 +1349,13 @@ static void deferred_vs_emit(Jit* Dst) {
             DeferredValueStackEntry* entry = &Dst->deferred_vs[i-1];
             if (entry->loc == CONST) {
                 PyObject* obj = PyTuple_GET_ITEM(Dst->co_consts, entry->val);
-                |.if arch==aarch64
-                #ifdef __aarch64__
+                if (IS_IMMORTAL(obj)) {
+                    emit_store64_vsp_offset_imm(Dst, 8 * (i-1), (unsigned long)obj);
+                } else {
                     emit_mov_imm(Dst, tmp_idx, (unsigned long)obj);
-                    if (!IS_IMMORTAL(obj))
-                        emit_incref(Dst, tmp_idx);
-                    | str tmp, [vsp, #8 * (i-1)]
-                #endif
-                |.else
-                #ifndef __aarch64__
-                    if (IS_IMMORTAL(obj)) {
-                        | mov_mem64_imm [vsp+ 8 * (i-1)], (unsigned long)obj
-                    } else {
-                        emit_mov_imm(Dst, tmp_idx, (unsigned long)obj);
-                        emit_incref(Dst, tmp_idx);
-                        | mov [vsp+ 8 * (i-1)], tmp
-                    }
-                #endif
-                |.endif
+                    emit_incref(Dst, tmp_idx);
+                    emit_store64_vsp_offset(Dst, tmp_idx, 8 * (i-1));
+                }
             } else if (entry->loc == FAST) {
                 |.if arch==aarch64
                 #ifdef __aarch64__
@@ -1372,11 +1369,7 @@ static void deferred_vs_emit(Jit* Dst) {
                 emit_incref(Dst, tmp_idx);
                 emit_store64_vsp_offset(Dst, tmp_idx, 8 * (i-1));
             } else if (entry->loc == REGISTER) {
-                |.if arch==aarch64
-                    | str Rx(entry->val), [vsp, #8 * (i-1)]
-                |.else
-                    | mov [vsp+ 8 * (i-1)], Rq(entry->val)
-                |.endif
+                emit_store64_vsp_offset(Dst, entry->val, 8 * (i-1));
                 if (entry->val == vs_preserved_reg_idx) {
                     emit_mov_imm(Dst, vs_preserved_reg_idx, 0); // we have to clear it because error path will xdecref
                 }
