@@ -992,11 +992,20 @@ static void emit_qword(Jit* Dst, unsigned long val_orig) {
 
 // Loads a register `r_idx` with a value `addr`, potentially doing a lea
 // of another register `other_idx` which contains a known value `other_addr`
-static void emit_mov_imm_or_lea(Jit* Dst, int r_idx, int other_idx, void* addr, void* other_addr) {
+static void emit_mov_imm_using_diff(Jit* Dst, int r_idx, int other_idx, void* addr, void* other_addr) {
 |.if arch==aarch64
 #ifdef __aarch64__
-    // TODO: can also use difference from previous const
-    emit_mov_imm(Dst, r_idx, (unsigned long)addr);
+    ptrdiff_t diff = (uintptr_t)addr - (uintptr_t)other_addr;
+    if (diff == 0) {
+        | mov Rx(r_idx), Rx(other_idx)
+    } else if (abs(diff) < 4096) {
+        if (addr > other_addr) {
+            | add Rx(r_idx), Rx(other_idx), #abs(diff)
+        } else {
+            | sub Rx(r_idx), Rx(other_idx), #abs(diff)
+        }
+    } else
+        emit_mov_imm(Dst, r_idx, (unsigned long)addr);
 #endif
 |.else
 #ifndef __aarch64__
@@ -1013,7 +1022,7 @@ static void emit_mov_imm_or_lea(Jit* Dst, int r_idx, int other_idx, void* addr, 
 // sets register r_idx1 = addr1 and r_idx2 = addr2. Uses a lea if beneficial.
 static void emit_mov_imm2(Jit* Dst, int r_idx1, void* addr1, int r_idx2, void* addr2) {
     emit_mov_imm(Dst, r_idx1, (unsigned long)addr1);
-    emit_mov_imm_or_lea(Dst, r_idx2, r_idx1, addr2, addr1);
+    emit_mov_imm_using_diff(Dst, r_idx2, r_idx1, addr2, addr1);
 }
 
 static void emit_call_ext_func(Jit* Dst, void* addr) {
@@ -2459,25 +2468,40 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         {
             deferred_vs_apply_if_same_var(Dst, oparg);
             |.if ARCH==aarch64
-            JIT_ASSERT(0, "");
+#if __aarch64__
+                | ldr arg2, [f, #get_fastlocal_offset(oparg)]
+                if (!Dst->known_defined[oparg] /* can be null */) {
+                    | cmp arg2, #0
+                    | beq >1
+
+                    switch_section(Dst, SECTION_COLD);
+                    |1:
+                    emit_mov_imm(Dst, arg1_idx, oparg);
+                    | b ->unboundlocal_error // arg1 must be oparg!
+                    switch_section(Dst, SECTION_CODE);
+                }
+                | str xzr, [f, #get_fastlocal_offset(oparg)]
+                emit_decref(Dst, arg2_idx, 0 /*= don't preserve res */);
+#endif
             |.else
-            | lea tmp, [f + get_fastlocal_offset(oparg)]
-            | mov arg2, [tmp]
-            if (!Dst->known_defined[oparg] /* can be null */) {
-                | test arg2, arg2
-                | jz >1
+#ifndef __aarch64__
+                | lea tmp, [f + get_fastlocal_offset(oparg)]
+                | mov arg2, [tmp]
+                if (!Dst->known_defined[oparg] /* can be null */) {
+                    | test arg2, arg2
+                    | jz >1
 
-                switch_section(Dst, SECTION_COLD);
-                |1:
-                emit_mov_imm(Dst, arg1_idx, oparg);
-                | jmp ->unboundlocal_error // arg1 must be oparg!
-                switch_section(Dst, SECTION_CODE);
-            }
-            | mov qword [tmp], 0
-            emit_decref(Dst, arg2_idx, 0 /*= don't preserve res */);
-
-            Dst->known_defined[oparg] = 0;
+                    switch_section(Dst, SECTION_COLD);
+                    |1:
+                    emit_mov_imm(Dst, arg1_idx, oparg);
+                    | jmp ->unboundlocal_error // arg1 must be oparg!
+                    switch_section(Dst, SECTION_CODE);
+                }
+                | mov qword [tmp], 0
+                emit_decref(Dst, arg2_idx, 0 /*= don't preserve res */);
+#endif
             |.endif
+            Dst->known_defined[oparg] = 0;
             break;
         }
 
@@ -2638,15 +2662,26 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             }
             if (opcode == COMPARE_OP && (oparg == PyCmp_IS || oparg == PyCmp_IS_NOT)) {
                 |.if ARCH==aarch64
-                JIT_ASSERT(0, "");
+                #if __aarch64__
+                    emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
+                    | cmp arg1, arg2
+                    if (oparg == PyCmp_IS) {
+                        | csel res, arg3, arg4, eq
+                    } else {
+                        | csel res, arg3, arg4, ne
+                    }
+                #endif
                 |.else
-                emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
-                | cmp Rq(arg1_idx), Rq(arg2_idx)
-                if (oparg == PyCmp_IS) {
-                    | cmovne Rq(res_idx), Rq(tmp_idx)
-                } else {
-                    | cmove Rq(res_idx), Rq(tmp_idx)
-                }
+                #ifndef __aarch64__
+                    emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
+                    | cmp Rq(arg1_idx), Rq(arg2_idx)
+                    if (oparg == PyCmp_IS) {
+                        | cmovne Rq(res_idx), Rq(tmp_idx)
+                    } else {
+                        | cmove Rq(res_idx), Rq(tmp_idx)
+                    }
+                #endif
+                |.endif
                 // don't need to incref Py_True/Py_False because they are immortals
                 if (ref_status[0] == OWNED && ref_status[1] == OWNED)
                     emit_decref2(Dst, arg2_idx, arg1_idx, 1 /*= preserve res */);
@@ -2654,7 +2689,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                     emit_decref(Dst, arg2_idx, 1 /*= preserve res */);
                 else if (ref_status[1] == OWNED)
                     emit_decref(Dst, arg1_idx, 1 /*= preserve res */);
-                |.endif
+
             } else {
                 if (!func)
                     func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
@@ -3418,17 +3453,17 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                     // Often the name and opcache pointers are close to each other,
                     // so instead of doing two 64-bit moves, we can do the second
                     // one as a lea off the first one and save a few bytes
-                    emit_mov_imm_or_lea(Dst, arg2_idx, arg1_idx, co_opcache, PyTuple_GET_ITEM(Dst->co_names, oparg));
+                    emit_mov_imm_using_diff(Dst, arg2_idx, arg1_idx, co_opcache, PyTuple_GET_ITEM(Dst->co_names, oparg));
                     emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */));
                     break;
 
                 case LOAD_ATTR:
-                    emit_mov_imm_or_lea(Dst, arg3_idx, arg1_idx, co_opcache, PyTuple_GET_ITEM(Dst->co_names, oparg));
+                    emit_mov_imm_using_diff(Dst, arg3_idx, arg1_idx, co_opcache, PyTuple_GET_ITEM(Dst->co_names, oparg));
                     emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */));
                     break;
 
                 case STORE_ATTR:
-                    emit_mov_imm_or_lea(Dst, arg4_idx, arg1_idx, co_opcache, PyTuple_GET_ITEM(Dst->co_names, oparg));
+                    emit_mov_imm_using_diff(Dst, arg4_idx, arg1_idx, co_opcache, PyTuple_GET_ITEM(Dst->co_names, oparg));
                     emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */));
                     break;
 
