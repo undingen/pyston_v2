@@ -734,6 +734,42 @@ static void switch_section(Jit* Dst, Section new_section) {
     }
 }
 
+// load a 64bit value relative to current SP into register
+static void emit_load64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
+|.if arch==aarch64
+    | ldr Rx(r_dst), [sp, #offset_in_bytes]
+|.else
+    | mov Rq(r_dst), [rsp + offset_in_bytes]
+|.endif
+}
+
+// store a 64bit value from register into SP relative memory location
+static void emit_store64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
+|.if arch==aarch64
+    | str Rx(r_dst), [sp, #offset_in_bytes]
+|.else
+    | mov [sp + offset_in_bytes], Rq(r_dst)
+|.endif
+}
+
+// load a 64bit value relative to current VSP into register
+static void emit_load64_vsp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
+|.if arch==aarch64
+    | ldr Rx(r_dst), [vsp, #offset_in_bytes]
+|.else
+    | mov Rq(r_dst), [vsp + offset_in_bytes]
+|.endif
+}
+
+// store a 64bit value from register into VSP relative memory location
+static void emit_store64_vsp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
+|.if arch==aarch64
+    | str Rx(r_dst), [vsp, #offset_in_bytes]
+|.else
+    | mov [vsp + offset_in_bytes], Rq(r_dst)
+|.endif
+}
+
 // moves the value stack pointer by num_values python objects
 static void emit_adjust_vs(Jit* Dst, int num_values) {
 |.if arch==aarch64
@@ -767,34 +803,18 @@ static void emit_push_v(Jit* Dst, int r_idx) {
 static void emit_pop_v(Jit* Dst, int r_idx) {
     deferred_vs_apply(Dst);
     emit_adjust_vs(Dst, -1);
-|.if arch==aarch64
-    | ldr Rx(r_idx), [vsp]
-|.else
-    | mov Rq(r_idx), [vsp]
-|.endif
+    emit_load64_vsp_offset(Dst, r_idx, 0);
 }
 
 // top = 1, second = 2, third = 3,...
 static void emit_read_vs(Jit* Dst, int r_idx, int stack_offset) {
     deferred_vs_apply(Dst);
-|.if arch==aarch64
-    //| sub tmp, vsp, #8*stack_offset
-    //| ldr Rx(r_idx), [tmp]
-    | ldr Rx(r_idx), [vsp, #8*stack_offset]
-|.else
-    | mov Rq(r_idx), [vsp - (8*stack_offset)]
-|.endif
+    emit_load64_vsp_offset(Dst, r_idx, 8*stack_offset);
 }
 
 static void emit_write_vs(Jit* Dst, int r_idx, int stack_offset) {
     deferred_vs_apply(Dst);
-|.if arch==aarch64
-    //| sub tmp, vsp, #8*stack_offset
-    //| str Rx(r_idx), [tmp]
-    | str Rx(r_idx), [vsp, #8*stack_offset]
-|.else
-    | mov [vsp - (8*stack_offset)], Rq(r_idx)
-|.endif
+    emit_store64_vsp_offset(Dst, r_idx, 8*stack_offset);
 }
 
 static void emit_dec_qword_ptr(Jit* Dst, void* ptr, int can_use_tmp_reg) {
@@ -967,25 +987,6 @@ static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.endif
 }
 
-// load a 64bit value relative to current SP into register
-static void emit_load64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-|.if arch==aarch64
-    | ldr Rx(r_dst), [sp, #offset_in_bytes]
-|.else
-    | mov Rq(r_dst), [rsp + offset_in_bytes]
-|.endif
-}
-
-// store a 64bit value from register into SP relative memory location
-static void emit_store64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-|.if arch==aarch64
-    | str Rx(r_dst), [sp, #offset_in_bytes]
-|.else
-    | mov [sp + offset_in_bytes], Rq(r_dst)
-|.endif
-}
-
-
 // moves a 32bit or 64bit immediate into a 64 bit memory location uses smallest encoding
 // because of a limitation of DynASM this has to be a macro an not a C function
 |.macro mov_mem64_imm, mem, val
@@ -1004,13 +1005,9 @@ static void emit_store64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_
 static void emit_cmp_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.if arch==aarch64
 #ifdef __aarch64__
-    if (abs(val) < 4096) {
+    if (val < 4096) {
         JIT_ASSERT(0, "not tested yet");
-        if (val < 0) {
-            | cmn Rx(r_idx), #abs(val)
-        } else {
-            | cmp Rx(r_idx), #abs(val)
-        }
+        | cmp Rx(r_idx), #val
     } else {
         emit_mov_imm(Dst, tmp_idx, val);
         | cmp Rx(r_idx), tmp
@@ -1036,11 +1033,11 @@ static void emit_mov_imm_using_diff(Jit* Dst, int r_idx, int other_idx, void* ad
     ptrdiff_t diff = (uintptr_t)addr - (uintptr_t)other_addr;
     if (diff == 0) {
         | mov Rx(r_idx), Rx(other_idx)
-    } else if (abs(diff) < 4096) {
+    } else if (labs(diff) < 4096) {
         if (addr > other_addr) {
-            | add Rx(r_idx), Rx(other_idx), #abs(diff)
+            | add Rx(r_idx), Rx(other_idx), #labs(diff)
         } else {
-            | sub Rx(r_idx), Rx(other_idx), #abs(diff)
+            | sub Rx(r_idx), Rx(other_idx), #labs(diff)
         }
     } else
         emit_mov_imm(Dst, r_idx, (unsigned long)addr);
@@ -1366,16 +1363,14 @@ static void deferred_vs_emit(Jit* Dst) {
                 |.if arch==aarch64
                 #ifdef __aarch64__
                     | ldr tmp, [f, #get_fastlocal_offset(entry->val)]
-                    emit_incref(Dst, tmp_idx);
-                    | str tmp, [vsp, #8 * (i-1)]
                 #endif
                 |.else
                 #ifndef __aarch64__
                     | mov tmp, [f + get_fastlocal_offset(entry->val)]
-                    emit_incref(Dst, tmp_idx);
-                    | mov [vsp+ 8 * (i-1)], tmp
                 #endif
                 |.endif
+                emit_incref(Dst, tmp_idx);
+                emit_store64_vsp_offset(Dst, tmp_idx, 8 * (i-1));
             } else if (entry->loc == REGISTER) {
                 |.if arch==aarch64
                     | str Rx(entry->val), [vsp, #8 * (i-1)]
@@ -1386,12 +1381,11 @@ static void deferred_vs_emit(Jit* Dst) {
                     emit_mov_imm(Dst, vs_preserved_reg_idx, 0); // we have to clear it because error path will xdecref
                 }
             } else if (entry->loc == STACK) {
+                emit_load64_sp_offset(Dst, tmp_idx, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8);
                 |.if arch==aarch64
-                    | ldr tmp, [sp, #(entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
                     | str xzr, [sp, #(entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
                     | str tmp, [vsp, #8 * (i-1)]
                 |.else
-                    | mov tmp, [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
                     | mov qword [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8], 0
                     | mov [vsp+ 8 * (i-1)], tmp
                 |.endif
@@ -1489,21 +1483,13 @@ static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
             }
             ref_status = OWNED;
         } else if (entry->loc == STACK) {
-            |.if arch==aarch64
-                | ldr Rx(r_idx), [sp, #(entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
-            |.else
-                | mov Rq(r_idx), [rsp + (entry->val + NUM_MANUAL_STACK_SLOTS) * 8]
-            |.endif
+            emit_load64_sp_offset(Dst, r_idx, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8);
             ref_status = OWNED;
         } else {
             JIT_ASSERT(0, "entry->loc not implemented");
         }
     } else {
-        |.if arch==aarch64
-            | ldr Rx(r_idx), [vsp, #-8*((num)-Dst->deferred_vs_next)]
-        |.else
-            | mov Rq(r_idx), [vsp-8*((num)-Dst->deferred_vs_next)]
-        |.endif
+        emit_load64_vsp_offset(Dst, r_idx, -8*(num-Dst->deferred_vs_next));
         ref_status = OWNED;
     }
     return ref_status;
@@ -1532,11 +1518,7 @@ static void deferred_vs_convert_reg_to_stack(Jit* Dst) {
 
         // if we have 'vs_preserved_reg' available use it over a stack slot
         if (!Dst->deferred_vs_preserved_reg_used) {
-            |.if arch==aarch64
-                | mov vs_preserved_reg, Rx(entry->val)
-            |.else
-                | mov vs_preserved_reg, Rq(entry->val)
-            |.endif
+            emit_mov64_reg(Dst, vs_preserved_reg_idx, entry->val);
             entry->loc = REGISTER;
             entry->val = vs_preserved_reg_idx;
             Dst->deferred_vs_preserved_reg_used = 1;
@@ -1544,11 +1526,7 @@ static void deferred_vs_convert_reg_to_stack(Jit* Dst) {
             // have to use a stack slot
             if (Dst->num_deferred_stack_slots <= Dst->deferred_stack_slot_next)
                 ++Dst->num_deferred_stack_slots;
-            |.if arch==aarch64
-                | str res, [sp, #(Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8]
-            |.else
-                | mov [rsp + (Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8], res
-            |.endif
+            emit_store64_sp_offset(Dst, res_idx, (Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8);
             entry->loc = STACK;
             entry->val = Dst->deferred_stack_slot_next;
             ++Dst->deferred_stack_slot_next;
@@ -3664,11 +3642,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     | mov arg1, vs_preserved_reg
     emit_xdecref_arg1(Dst);
     for (int i=0; i<Dst->num_deferred_stack_slots; ++i) {
-        |.if ARCH==aarch64
-            | ldr arg1, [sp, #(NUM_MANUAL_STACK_SLOTS + i) * 8]
-        |.else
-            | mov arg1, [rsp + (NUM_MANUAL_STACK_SLOTS + i) * 8]
-        |.endif
+        emit_load64_sp_offset(Dst, arg1_idx, (NUM_MANUAL_STACK_SLOTS + i) * 8);
         emit_xdecref_arg1(Dst);
     }
 
