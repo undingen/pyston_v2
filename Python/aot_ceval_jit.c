@@ -2681,9 +2681,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
             char wrote_inline_cache = 0;
             if (opcode == CALL_METHOD) {
-                |.if ARCH==aarch64
-                JIT_ASSERT(0, "");
-                |.else
                 CallMethodHint* hint = Dst->call_method_hints;
 
                 // For proper bytecode there should be exactly
@@ -2702,7 +2699,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
                         if (funcptr && _PyObject_RealIsSubclass((PyObject*)hint->type, (PyObject *)PyDescr_TYPE(method))) {
                             wrote_inline_cache = 1;
-
+                            |.if ARCH==aarch64
+                            JIT_ASSERT(0, "");
+                            |.else
                             // Strategy:
                             // First guard on tstate->use_tracing == 0
                             // It looks like we have to guard on this variable, even though we already
@@ -2798,13 +2797,13 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                             }
                             emit_adjust_vs(Dst, -num_vs_args);
                             emit_if_res_0_error(Dst);
+                            |.endif
                         }
                     }
                 }
 
                 if (hint)
                     free(hint);
-                |.endif
             }
 
             if (wrote_inline_cache)
@@ -2824,13 +2823,15 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 num_vs_args += 1;
 
                 |.if ARCH==aarch64
-                    JIT_ASSERT(0, "");
+                    | ldr tmp, [vsp, #-8*num_vs_args]
+                    | cmp tmp, #0
+                    | cinc arg3, arg3, ne
                 |.else
-                // this is taken from clang:
-                // meth = PEEK(oparg + 2);
-                // arg3 = ((meth == 0) ? 0 : 1) + oparg
-                | cmp qword [vsp - (8*num_vs_args)], 1
-                | sbb arg3, -1
+                    // this is taken from clang:
+                    // meth = PEEK(oparg + 2);
+                    // arg3 = ((meth == 0) ? 0 : 1) + oparg
+                    | cmp qword [vsp - (8*num_vs_args)], 1
+                    | sbb arg3, -1
                 |.endif
             }
             emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */));
