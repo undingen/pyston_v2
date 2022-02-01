@@ -1408,11 +1408,7 @@ static int get_fastlocal_offset(int fastlocal_idx) {
 // this does the same as: r = freevars[num]
 static void emit_load_freevar(Jit* Dst, int r_idx, int num) {
     // PyObject *cell = (f->f_localsplus + co->co_nlocals)[oparg];
-|.if arch==aarch64
-    JIT_ASSERT(0, "");
-|.else
-    | mov Rq(r_idx), [f + get_fastlocal_offset(Dst->co->co_nlocals + num)]
-|.endif
+    emit_load64_f_offset(Dst, r_idx, get_fastlocal_offset(Dst->co->co_nlocals + num));
 }
 
 //////////////////////////////////////////////////////////////
@@ -1507,8 +1503,8 @@ static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
 
 #ifdef __aarch64__
     // on arm 'res' and 'arg1' are the same register!
-    if (r_idx == res_idx && Dst->deferred_vs_res_used)
-        deferred_vs_convert_reg_to_stack(Dst);
+    //if (r_idx == res_idx && Dst->deferred_vs_res_used)
+    //    deferred_vs_convert_reg_to_stack(Dst);
 #endif
 
     RefStatus ref_status = OWNED;
@@ -1627,8 +1623,9 @@ static void deferred_vs_push_reg_and_apply(Jit* Dst, int r_idx) {
 // peeks the top stack entry into register r_idx_top and afterwards calls deferred_vs_apply
 // generates better code than doing it split
 static void deferred_vs_peek_top_and_apply(Jit* Dst, int r_idx_top) {
-    if (r_idx_top == res_idx && Dst->deferred_vs_res_used)
-        deferred_vs_convert_reg_to_stack(Dst);
+    //if (r_idx_top == res_idx && Dst->deferred_vs_res_used)
+    //    deferred_vs_convert_reg_to_stack(Dst);
+    JIT_ASSERT(r_idx_top != res_idx && r_idx_top != vs_preserved_reg_idx, "they need special handling");
 
     if (Dst->deferred_vs_next) {
         // load the value into the destination register and replace the deferred_vs entry
@@ -3161,21 +3158,23 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
         case LOAD_DEREF:
         case DELETE_DEREF:
-            |.if ARCH==aarch64
-                JIT_ASSERT(0, "");
-            |.else
             deferred_vs_convert_reg_to_stack(Dst);
             // PyObject *cell = freevars[oparg];
             emit_load_freevar(Dst, arg1_idx, oparg);
             // PyObject *value = PyCell_GET(cell);
-            | mov res, [arg1 + offsetof(PyCellObject, ob_ref)]
-            | test res, res
-            | jz >1
+            |.if ARCH==aarch64
+                | ldr res, [arg1, #offsetof(PyCellObject, ob_ref)]
+                | cmp res, #0
+            |.else
+                | mov res, [arg1 + offsetof(PyCellObject, ob_ref)]
+                | test res, res
+            |.endif
+            | branch_eq >1
 
             switch_section(Dst, SECTION_COLD);
             |1:
             emit_mov_imm(Dst, arg3_idx, oparg); // deref_error assumes that oparg is in arg3!
-            | jmp ->deref_error
+            | branch ->deref_error
 
             if (!deref_error_label) {
                 deref_error_label = 1;
@@ -3183,7 +3182,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 | mov arg1, tstate
                 emit_mov_imm(Dst, arg2_idx, (unsigned long)co);
                 emit_call_ext_func(Dst, format_exc_unbound);
-                | jmp ->error
+                | branch ->error
             }
 
             switch_section(Dst, SECTION_CODE);
@@ -3192,10 +3191,13 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 emit_incref(Dst, res_idx);
                 deferred_vs_push(Dst, REGISTER, res_idx);
             } else { // DELETE_DEREF
-                | mov qword [arg1 + offsetof(PyCellObject, ob_ref)], 0
+                |.if ARCH==aarch64
+                    | str xzr, [arg1, #offsetof(PyCellObject, ob_ref)]
+                |.else
+                    | mov qword [arg1 + offsetof(PyCellObject, ob_ref)], 0
+                |.endif
                 emit_decref(Dst, res_idx, 0 /*= don't preserve res */);
             }
-            |.endif
             break;
 
         case SETUP_FINALLY:
