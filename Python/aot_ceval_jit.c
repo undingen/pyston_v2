@@ -873,12 +873,12 @@ static void emit_pop_v(Jit* Dst, int r_idx) {
 // top = 1, second = 2, third = 3,...
 static void emit_read_vs(Jit* Dst, int r_idx, int stack_offset) {
     deferred_vs_apply(Dst);
-    emit_load64_vsp_offset(Dst, r_idx, 8*stack_offset);
+    emit_load64_vsp_offset(Dst, r_idx, -8*stack_offset);
 }
 
 static void emit_write_vs(Jit* Dst, int r_idx, int stack_offset) {
     deferred_vs_apply(Dst);
-    emit_store64_vsp_offset(Dst, r_idx, 8*stack_offset);
+    emit_store64_vsp_offset(Dst, r_idx, -8*stack_offset);
 }
 
 static void emit_dec_qword_ptr(Jit* Dst, void* ptr, int can_use_tmp_reg) {
@@ -3443,11 +3443,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                     // res == 0 means error
                     // res == 2 means goto exception_unwind
                     emit_if_res_0_error(Dst);
-                    |.if ARCH==aarch64
-                        JIT_ASSERT(0, "");
-                    |.else
-                    | jmp ->exception_unwind
-                    |.endif
+                    | branch ->exception_unwind
                     break;
 
                 case END_ASYNC_FOR:
@@ -3534,9 +3530,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     |.endif
     | branch ->return
 
-    |.if ARCH==aarch64
-    |.else
-
     |->handle_signal_res_in_use:
     // we have to preserve res because it's used by our deferred stack optimizations
     | mov tmp_preserved_reg, res
@@ -3558,8 +3551,11 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // fall through
 
     |->handle_signal_jump_to_inst:
-
-    | mov Rd(arg1_idx), [f + offsetof(PyFrameObject, f_lasti)]
+    |.if ARCH==aarch64
+        | ldr Rw(arg1_idx), [f, #offsetof(PyFrameObject, f_lasti)]
+    |.else
+        | mov Rd(arg1_idx), [f + offsetof(PyFrameObject, f_lasti)]
+    |.endif
     emit_mov_inst_addr_to_tmp(Dst, arg1_idx);
     // tmp points now to the beginning of the bytecode implementation
     // but we want to skip the signal check.
@@ -3569,32 +3565,46 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     //       + 'cmp qword [interrupt], 0' = 4byte (64bit cmp)
     // Not that we are in the handle_signal label which can only be reached if we generated
     // the code mentioned above.
-    | add tmp, 8 + 4
-    | cmp tmp, tmp // dummy to set the flags for 'jne ...' to fail
-    | jmp tmp
+    |.if ARCH==aarch64
+        | add tmp, tmp, #8 + 4
+        | cmp tmp, tmp // dummy to set the flags for 'bne ...' to fail
+    |.else
+        | add tmp, 8 + 4
+        | cmp tmp, tmp // dummy to set the flags for 'jne ...' to fail
+    |.endif
+    | branch_reg tmp
 
     |->handle_tracing_or_signal_no_deferred_stack:
     // compares ceval->tracing_possible == 0 (32bit)
-    | cmp dword [interrupt], 0
+    |.if ARCH==aarch64
+        | ldr Rw(tmp_idx), [interrupt]
+        | cmp Rw(tmp_idx), #0
+    |.else
+        | cmp dword [interrupt], 0
+    |.endif
     // there is no deferred stack so we don't have to jump to handle_signal_res_in_use
-    | je ->handle_signal_res_not_in_use
-    | jmp ->deopt_return
+    | branch_eq ->handle_signal_res_not_in_use
+    | branch ->deopt_return
 
     |->handle_tracing_or_signal_no_deferred_stack_new_line:
     // compares ceval->tracing_possible == 0 (32bit)
-    | cmp dword [interrupt], 0
+    |.if ARCH==aarch64
+        | ldr Rw(tmp_idx), [interrupt]
+        | cmp Rw(tmp_idx), #0
+    |.else
+        | cmp dword [interrupt], 0
+    |.endif
     // there is no deferred stack so we don't have to jump to handle_signal_res_in_use
-    | je ->handle_signal_res_not_in_use
+    | branch_eq ->handle_signal_res_not_in_use
     // falltrough
 
     |->deopt_return_new_line:
     emit_mov_imm(Dst, real_res_idx, (1 << 2) /* this means first trace check for this line */ | 3 /*= deopt */);
-    | jmp ->return
+    | branch ->return
 
     |->deopt_return:
     emit_mov_imm(Dst, real_res_idx, 3 /*= deopt */);
-    | jmp ->return
-    |.endif
+    | branch ->return
 
     |->error_decref_tmp_preserved_reg:
     emit_decref(Dst, tmp_preserved_reg_idx, 0 /*= don't preserve res */);
