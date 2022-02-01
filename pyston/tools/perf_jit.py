@@ -96,15 +96,15 @@ def getCommentForInst(inst, index, insts):
 
     # on ARM64 we need up to 4 instructions to load a 64bit immediate:
     # mov to set the lowest 16bit and clear the top followed by movk instructions:
-    # mov   x1, #0x83d0
+    # mov   w1, #0x83d0
     # movk  x1, #0xb38b, lsl #16
     # movk  x1, #0xffff, lsl #32
-    mov = re.search(r"mov\s+(x\d{1,2}), #(0x[a-f0-9]+)", inst)
+    mov = re.search(r"mov\s+[wx](\d{1,2}), #(0x[a-f0-9]+)", inst)
     if mov:
         n = int(mov.group(2), 16)
         num_movk = 0
         for l in lines[index+1:]:
-            movk = re.search(r"movk\s+" + mov.group(1) + ", #(0x[a-f0-9]+), lsl #(\d\d)", l)
+            movk = re.search(r"movk\s+x" + mov.group(1) + ", #(0x[a-f0-9]+), lsl #(\d\d)", l)
             if not movk:
                 break
             n += int(movk.group(1), 16) << int(movk.group(2))

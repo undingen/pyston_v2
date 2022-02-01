@@ -1154,13 +1154,23 @@ static void emit_call_ext_func(Jit* Dst, void* addr) {
     // WARNING: if you modify this you have to adopt SET_JIT_AOT_FUNC
 |.if arch==aarch64
 #ifdef __aarch64__
-    JIT_ASSERT(IS_32BIT_VAL((long)addr), "does not fit in 32bit");
+    JIT_ASSERT(tmp2_idx == 6, "SET_JIT_AOT_FUNC needs to be adopted");
     // we can't use 'emit_mov_imm' because we have to make sure
-    // that we always generate this 3 instruction sequence because SET_JIT_AOT_FUNC is patching it later.
-    // encodes as: 0b11010010100xxxxxxxxxxxxxxxx00110 / 0xD2800006 | (addr&0xFFFF)<<5
+    // that we always generate this 3/5 instruction sequence because SET_JIT_AOT_FUNC is patching it later.
+    // encodes as: 0x52800006 | (addr&0xFFFF)<<5 (=Rw(tmp2_idx)) or 0xD2800006 (=Rx(tmp2_idx))
+    // note: we use Rx() DynASM sometimes encodes the instruction as Rw() here
+    //       because the 32bit op clears the higher 32bit it does not change things.
     | mov Rx(tmp2_idx), #(unsigned long)addr&UINT16_MAX
-    // encodes as: 0b11110010101xxxxxxxxxxxxxxxx00110 / 0xF2A00006 | (addr>>16)<<5
+    // encodes as: 0xF2A00006 | ((addr>>16)&0xFFFF)<<5
     | movk Rx(tmp2_idx), #((unsigned long)addr>>16)&UINT16_MAX, lsl #16
+
+    if (!IS_32BIT_VAL((long)addr)) {
+        // encodes as: 0xF2C00006 | ((addr>>32)&0xFFFF)<<5
+        | movk Rx(tmp2_idx), #((unsigned long)addr>>32)&UINT16_MAX, lsl #32
+        // encodes as: 0xF2E00006 | ((addr>>48)&0xFFFF)<<5
+        | movk Rx(tmp2_idx), #((unsigned long)addr>>48)&UINT16_MAX, lsl #48
+    }
+
     // encodes as: 0xD63F00C0
     | blr tmp2
     | mov res, real_res
