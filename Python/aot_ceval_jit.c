@@ -818,6 +818,24 @@ static void emit_store64_vsp_offset(Jit* Dst, int r_dst, unsigned long offset_in
 |.endif
 }
 
+// load a 64bit value relative to current python frame into register
+static void emit_load64_f_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
+|.if arch==aarch64
+    | ldr Rx(r_dst), [f, #offset_in_bytes]
+|.else
+    | mov Rq(r_dst), [f + offset_in_bytes]
+|.endif
+}
+
+// store a 64bit value from register into python frame relative memory location
+static void emit_store64_f_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
+|.if arch==aarch64
+    | str Rx(r_dst), [f, #offset_in_bytes]
+|.else
+    | mov [f + offset_in_bytes], Rq(r_dst)
+|.endif
+}
+
 // moves the value stack pointer by num_values python objects
 static void emit_adjust_vs(Jit* Dst, int num_values) {
 |.if arch==aarch64
@@ -840,18 +858,14 @@ static void emit_adjust_vs(Jit* Dst, int num_values) {
 
 static void emit_push_v(Jit* Dst, int r_idx) {
     deferred_vs_apply(Dst);
-|.if arch==aarch64
-    | str Rx(r_idx), [vsp]
-|.else
-    | mov [vsp], Rq(r_idx)
-|.endif
+    emit_store64_vsp_offset(Dst, r_idx, 0 /*= offset */);
     emit_adjust_vs(Dst, 1);
 }
 
 static void emit_pop_v(Jit* Dst, int r_idx) {
     deferred_vs_apply(Dst);
     emit_adjust_vs(Dst, -1);
-    emit_load64_vsp_offset(Dst, r_idx, 0);
+    emit_load64_vsp_offset(Dst, r_idx, 0 /*= offset */);
 }
 
 // top = 1, second = 2, third = 3,...
@@ -1053,6 +1067,25 @@ static void emit_store64_sp_offset_imm(Jit* Dst, long offset, unsigned long val)
 |.endif
     emit_mov_imm(Dst, tmp_idx, val);
     emit_store64_sp_offset(Dst, tmp_idx, offset);
+}
+static void emit_store64_f_offset_imm(Jit* Dst, long offset, unsigned long val) {
+|.if arch==aarch64
+#ifdef __aarch64__
+    if (val == 0) {
+        | str xzr, [f, #offset]
+        return;
+    }
+#endif
+|.else
+#ifndef __aarch64__
+    if (IS_32BIT_VAL(val)) {
+        | mov qword [f + offset], (unsigned int)val
+        return;
+    }
+#endif
+|.endif
+    emit_mov_imm(Dst, tmp_idx, val);
+    emit_store64_f_offset(Dst, tmp_idx, offset);
 }
 
 static void emit_cmp_imm(Jit* Dst, int r_idx, unsigned long val) {
@@ -1396,15 +1429,7 @@ static void deferred_vs_emit(Jit* Dst) {
                     emit_store64_vsp_offset(Dst, tmp_idx, 8 * (i-1));
                 }
             } else if (entry->loc == FAST) {
-                |.if arch==aarch64
-                #ifdef __aarch64__
-                    | ldr tmp, [f, #get_fastlocal_offset(entry->val)]
-                #endif
-                |.else
-                #ifndef __aarch64__
-                    | mov tmp, [f + get_fastlocal_offset(entry->val)]
-                #endif
-                |.endif
+                emit_load64_f_offset(Dst, tmp_idx, get_fastlocal_offset(entry->val));
                 emit_incref(Dst, tmp_idx);
                 emit_store64_vsp_offset(Dst, tmp_idx, 8 * (i-1));
             } else if (entry->loc == REGISTER) {
@@ -1493,20 +1518,12 @@ static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
             emit_mov_imm(Dst, r_idx, (unsigned long)obj);
             ref_status = IS_IMMORTAL(obj) ? IMMORTAL : BORROWED;
         } else if (entry->loc == FAST) {
-            |.if arch==aarch64
-                | ldr Rx(r_idx), [f, #get_fastlocal_offset(entry->val)]
-            |.else
-                | mov Rq(r_idx), [f + get_fastlocal_offset(entry->val)]
-            |.endif
+            emit_load64_f_offset(Dst, r_idx, get_fastlocal_offset(entry->val));
             ref_status = BORROWED;
         } else if (entry->loc == REGISTER) {
             // only generate mov if src and dst is different
             if (r_idx != entry->val) {
-                |.if arch==aarch64
-                    | mov Rx(r_idx), Rx(entry->val)
-                |.else
-                    | mov Rq(r_idx), Rq(entry->val)
-                |.endif
+                emit_mov64_reg(Dst, r_idx, entry->val);
             }
             ref_status = OWNED;
         } else if (entry->loc == STACK) {
@@ -2398,14 +2415,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case STORE_FAST:
             deferred_vs_pop1_owned(Dst, arg2_idx);
             deferred_vs_apply_if_same_var(Dst, oparg);
-            |.if ARCH==aarch64
-                | ldr arg1, [f, #get_fastlocal_offset(oparg)]
-                | str arg2, [f, #get_fastlocal_offset(oparg)]
-            |.else
-                | lea tmp, [f + get_fastlocal_offset(oparg)]
-                | mov arg1, [tmp]
-                | mov [tmp], arg2
-            |.endif
+            emit_load64_f_offset(Dst, arg1_idx, get_fastlocal_offset(oparg));
+            emit_store64_f_offset(Dst, arg2_idx, get_fastlocal_offset(oparg));
             if (Dst->known_defined[oparg]) {
                 emit_decref(Dst, arg1_idx, 0 /* don't preserve res */);
             } else {
@@ -2418,12 +2429,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case DELETE_FAST:
         {
             deferred_vs_apply_if_same_var(Dst, oparg);
-            |.if ARCH==aarch64
-                | ldr arg2, [f, #get_fastlocal_offset(oparg)]
-            |.else
-                | lea tmp, [f + get_fastlocal_offset(oparg)]
-                | mov arg2, [tmp]
-            |.endif
+            emit_load64_f_offset(Dst, arg2_idx, get_fastlocal_offset(oparg));
             if (!Dst->known_defined[oparg] /* can be null */) {
                 |.if ARCH==aarch64
                     | cmp arg2, #0
@@ -2438,11 +2444,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 | branch ->unboundlocal_error // arg1 must be oparg!
                 switch_section(Dst, SECTION_CODE);
             }
-            |.if ARCH==aarch64
-                | str xzr, [f, #get_fastlocal_offset(oparg)]
-            |.else
-                | mov qword [tmp], 0
-            |.endif
+            emit_store64_f_offset_imm(Dst, get_fastlocal_offset(oparg), 0 /*= value */);
             emit_decref(Dst, arg2_idx, 0 /*= don't preserve res */);
             Dst->known_defined[oparg] = 0;
             break;
@@ -3050,11 +3052,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         {
             RefStatus ref_status = deferred_vs_pop1(Dst, arg3_idx);
             deferred_vs_convert_reg_to_stack(Dst);
-            |.if ARCH==aarch64
-                | ldr arg1, [f, #offsetof(PyFrameObject, f_globals)]
-            |.else
-                | mov arg1, [f + offsetof(PyFrameObject, f_globals)]
-            |.endif
+            emit_load64_f_offset(Dst, arg1_idx, offsetof(PyFrameObject, f_globals));
             emit_mov_imm(Dst, arg2_idx, (unsigned long)PyTuple_GET_ITEM(Dst->co_names, oparg));
             emit_call_decref_args1(Dst, PyDict_SetItem, arg3_idx, &ref_status);
             emit_if_res_32b_not_0_error(Dst);
