@@ -2602,26 +2602,20 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 }
             }
             if (opcode == COMPARE_OP && (oparg == PyCmp_IS || oparg == PyCmp_IS_NOT)) {
+                emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
+                | cmp arg1, arg2
                 |.if ARCH==aarch64
-                #ifdef __aarch64__
-                    emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
-                    | cmp arg1, arg2
                     if (oparg == PyCmp_IS) {
-                        | csel res, arg3, arg4, eq
+                        | csel res, res, tmp, eq
                     } else {
-                        | csel res, arg3, arg4, ne
+                        | csel res, res, tmp, ne
                     }
-                #endif
                 |.else
-                #ifndef __aarch64__
-                    emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
-                    | cmp Rq(arg1_idx), Rq(arg2_idx)
                     if (oparg == PyCmp_IS) {
                         | cmovne Rq(res_idx), Rq(tmp_idx)
                     } else {
                         | cmove Rq(res_idx), Rq(tmp_idx)
                     }
-                #endif
                 |.endif
                 // don't need to incref Py_True/Py_False because they are immortals
                 if (ref_status[0] == OWNED && ref_status[1] == OWNED)
