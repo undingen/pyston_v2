@@ -734,6 +734,8 @@ static void switch_section(Jit* Dst, Section new_section) {
     }
 }
 
+// MACROS TO MAKE ASM LIFE EASIER
+
 |.macro branch, dst
 |.if arch==aarch64
     | b dst
@@ -1771,17 +1773,6 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
     |.if arch==aarch64
     return 1;
     |.else
-    // MACROS TO MAKE ASM LIFE EASIER
-
-    // Same as cmp_imm, but if r is a memory expression we need to specify the size of the load.
-    |.macro cmp_imm_mem, r, addr
-    || if (IS_32BIT_VAL(addr)) {
-    |       cmp qword r, (unsigned int)addr
-    || } else {
-    |       mov64 tmp, (unsigned long)addr
-    |       cmp r, tmp
-    || }
-    |.endmacro
 
     // compares tp_version_tag with type_ver
     // branches to false_branch on inequality else continues
@@ -2192,8 +2183,17 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
     case BEFORE_ASYNC_WITH:
     case YIELD_FROM:
         |.if arch==aarch64
-            JIT_ASSERT(0, "");
+        #ifdef __aarch64__
+            | ldr Rw(tmp_idx), [interrupt]
+            | cmp Rw(tmp_idx), wzr
+            | bne >1
+            switch_section(Dst, SECTION_COLD);
+            |1:
+            // FILL THIS IN
+            switch_section(Dst, SECTION_CODE);
+        #endif
         |.else
+        #ifndef __aarch64__
         // compares ceval->tracing_possible == 0 (32bit)
         | cmp dword [interrupt], 0 // inst is 3 bytes long
         // if we deferred stack operations we have to emit a special deopt path
@@ -2220,6 +2220,7 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
                 | jne ->deopt_return
             }
         }
+        #endif
         |.endif
         break;
 
@@ -2231,8 +2232,8 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
 
         |.if arch==aarch64
         #ifdef __aarch64__
-            | ldr Rw(tmp_idx), [interrupt]
-            | cmp Rw(tmp_idx), wzr
+            | ldr Rx(tmp_idx), [interrupt]
+            | cmp Rx(tmp_idx), xzr
             | bne >1
             switch_section(Dst, SECTION_COLD);
             |1:
@@ -2955,21 +2956,28 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
         case END_FINALLY:
         {
-            |.if ARCH==aarch64
-                JIT_ASSERT(0, "");
-            |.else
             RefStatus ref_status = OWNED;
             deferred_vs_pop1_owned(Dst, arg1_idx);
             deferred_vs_apply(Dst);
-            | test arg1, arg1
-            | jnz ->end_finally
+            |.if ARCH==aarch64
+                | cmp arg1, #0
+            |.else
+                | test arg1, arg1
+            |.endif
+            | branch_ne ->end_finally
 
             if (!end_finally_label) {
                 end_finally_label = 1;
                 switch_section(Dst, SECTION_COLD);
                 |->end_finally:
-                | cmp dword [arg1 + offsetof(PyObject, ob_type)], (unsigned int)&PyLong_Type
-                | jne >2
+                emit_mov_imm(Dst, tmp_idx, (unsigned int)&PyLong_Type);
+                |.if ARCH==aarch64
+                    | ldr arg2, [arg1, #offsetof(PyObject, ob_type)]
+                    | cmp tmp, arg2
+                |.else
+                    | cmp [arg1 + offsetof(PyObject, ob_type)], tmp
+                |.endif
+                | branch_ne >2
 
                 // inside CALL_FINALLY we created a long with the bytecode offset to the next instruction
                 // extract it and jump to it
@@ -2983,10 +2991,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 emit_read_vs(Dst, arg4_idx, 2 /*=second*/);
                 emit_adjust_vs(Dst, -2);
                 emit_call_ext_func(Dst, _PyErr_Restore);
-                | jmp ->exception_unwind
+                | branch ->exception_unwind
                 switch_section(Dst, SECTION_CODE);
             }
-            |.endif
             break;
         }
 
@@ -3193,26 +3200,33 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
         case SETUP_FINALLY:
         case SETUP_ASYNC_WITH:
-            |.if ARCH==aarch64
-                JIT_ASSERT(0, "");
-            |.else
             deferred_vs_apply(Dst);
             // PyFrame_BlockSetup(f, SETUP_FINALLY, INSTR_OFFSET() + oparg, STACK_LEVEL());
             | mov arg1, f
             emit_mov_imm(Dst, arg2_idx, SETUP_FINALLY);
             emit_mov_imm(Dst, arg3_idx, (inst_idx + 1)*2 + oparg);
             // STACK_LEVEL()
-            if (opcode == SETUP_ASYNC_WITH) {
-                // the interpreter pops the top value and pushes it afterwards
-                // we instead just calculate the stack level with the vsp minus one value.
-                | lea arg4, [vsp - 8]
-            } else {
-                | mov arg4, vsp
-            }
-            | sub arg4, [f + offsetof(PyFrameObject, f_valuestack)]
-            | sar arg4, 3 // divide by 8 = sizeof(void*)
-            emit_call_ext_func(Dst, PyFrame_BlockSetup);
+            |.if ARCH==aarch64
+                int src_idx = vsp_idx;
+                if (opcode == SETUP_ASYNC_WITH) {
+                    | sub arg4, vsp, #8
+                    src_idx = arg4_idx;
+                }
+                | ldr tmp, [f, #offsetof(PyFrameObject, f_valuestack)]
+                | sub arg4, Rx(src_idx), tmp
+                | asr arg4, arg4, #3
+            |.else
+                if (opcode == SETUP_ASYNC_WITH) {
+                    // the interpreter pops the top value and pushes it afterwards
+                    // we instead just calculate the stack level with the vsp minus one value.
+                    | lea arg4, [vsp - 8]
+                } else {
+                    | mov arg4, vsp
+                }
+                | sub arg4, [f + offsetof(PyFrameObject, f_valuestack)]
+                | sar arg4, 3 // divide by 8 = sizeof(void*)
             |.endif
+            emit_call_ext_func(Dst, PyFrame_BlockSetup);
             break;
 
         case POP_BLOCK:
