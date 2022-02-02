@@ -2153,22 +2153,15 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
 #endif // ENABLE_AVOID_SIG_TRACE_CHECK
     }
 
-/*
-    // disable this for now
-    |nop
-    |nop
-    |nop
-    return;
-*/
     // WARNING: if you adjust anything here check if you have to adjust jmp_to_inst_idx
 
     // set opcode pointer. we do it before checking for signals to make deopt easier
     |.if arch==aarch64
-        // insts are 8 bytes long
+        // insts are 2*4=8 bytes long
         | mov tmp, #inst_idx*2
         | str Rw(tmp_idx), [f, #offsetof(PyFrameObject, f_lasti)]
     |.else
-        |  mov dword [f + offsetof(PyFrameObject, f_lasti)], inst_idx*2 // inst is 8 bytes long
+        | mov dword [f + offsetof(PyFrameObject, f_lasti)], inst_idx*2 // inst is 8 bytes long
     |.endif
     // if the current opcode has an EXTENDED_ARG prefix (or more of them - not sure if possible but we handle it here)
     // we need to modify f_lasti in case of deopt.
@@ -2189,46 +2182,44 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
     case SETUP_WITH:
     case BEFORE_ASYNC_WITH:
     case YIELD_FROM:
+        // compares ceval->tracing_possible == 0 (32bit)
         |.if arch==aarch64
-        #ifdef __aarch64__
+            // insts are 2*4=8 bytes long
             | ldr Rw(tmp_idx), [interrupt]
             | cmp Rw(tmp_idx), wzr
-            | bne >1
-            switch_section(Dst, SECTION_COLD);
-            |1:
-            // FILL THIS IN
-            switch_section(Dst, SECTION_CODE);
-        #endif
         |.else
-        #ifndef __aarch64__
-        // compares ceval->tracing_possible == 0 (32bit)
-        | cmp dword [interrupt], 0 // inst is 3 bytes long
+            | cmp dword [interrupt], 0 // inst is 3 bytes long
+        |.endif
+
         // if we deferred stack operations we have to emit a special deopt path
         if (Dst->deferred_vs_next || num_extended_arg) {
-            | jne >1
+            | branch_ne >1
             switch_section(Dst, SECTION_COLD);
             |1:
             deferred_vs_emit(Dst);
 
             // adjust f_lasti to point to the first EXTENDED_ARG
             if (num_extended_arg) {
-                | mov dword [f + offsetof(PyFrameObject, f_lasti)], (inst_idx-num_extended_arg) *2
+                |.if arch==aarch64
+                    | mov tmp, #(inst_idx-num_extended_arg) *2
+                    | str Rw(tmp_idx), [f, #offsetof(PyFrameObject, f_lasti)]
+                |.else
+                    | mov dword [f + offsetof(PyFrameObject, f_lasti)], (inst_idx-num_extended_arg) *2
+                |.endif
             }
             if (!Dst->emitted_trace_check_for_line) {
-                | jmp ->deopt_return_new_line
+                | branch ->deopt_return_new_line
             } else {
-                | jmp ->deopt_return
+                | branch ->deopt_return
             }
             switch_section(Dst, SECTION_CODE);
         } else {
             if (!Dst->emitted_trace_check_for_line) {
-                | jne ->deopt_return_new_line
+                | branch_ne ->deopt_return_new_line
             } else {
-                | jne ->deopt_return
+                | branch_ne ->deopt_return
             }
         }
-        #endif
-        |.endif
         break;
 
     default:
@@ -2238,52 +2229,53 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
         // compares ceval->tracing_possible == 0 and eval_breaker == 0 in one (64bit)
 
         |.if arch==aarch64
-        #ifdef __aarch64__
+            // insts are 2*4=8 bytes long
             | ldr Rx(tmp_idx), [interrupt]
             | cmp Rx(tmp_idx), xzr
-            | bne >1
-            switch_section(Dst, SECTION_COLD);
-            |1:
-            // FILL THIS IN
-            switch_section(Dst, SECTION_CODE);
-        #endif
         |.else
-        #ifndef __aarch64__
-        | cmp qword [interrupt], 0 // inst is 4 bytes long
+            | cmp qword [interrupt], 0 // inst is 4 bytes long
+        |.endif
 
         // if we deferred stack operations we have to emit a special deopt path
         if (Dst->deferred_vs_next || num_extended_arg) {
-            | jne >1
+            | branch_ne >1
             switch_section(Dst, SECTION_COLD);
             |1:
             // compares ceval->tracing_possible == 0 (32bit)
-            | cmp dword [interrupt], 0
+            |.if arch==aarch64
+                | cmp Rw(tmp_idx), wzr
+            |.else
+                | cmp dword [interrupt], 0
+            |.endif
             if (Dst->deferred_vs_res_used) {
-                | je ->handle_signal_res_in_use
+                | branch_eq ->handle_signal_res_in_use
             } else {
-                | je ->handle_signal_res_not_in_use
+                | branch_eq ->handle_signal_res_not_in_use
             }
             deferred_vs_emit(Dst);
 
             // adjust f_lasti to point to the first EXTENDED_ARG
             if (num_extended_arg) {
-                | mov dword [f + offsetof(PyFrameObject, f_lasti)], (inst_idx-num_extended_arg) *2
+                |.if arch==aarch64
+                    | mov tmp, #(inst_idx-num_extended_arg) *2
+                    | str Rw(tmp_idx), [f, #offsetof(PyFrameObject, f_lasti)]
+                |.else
+                    | mov dword [f + offsetof(PyFrameObject, f_lasti)], (inst_idx-num_extended_arg) *2
+                |.endif
             }
             if (!Dst->emitted_trace_check_for_line) {
-                | jmp ->deopt_return_new_line
+                | branch ->deopt_return_new_line
             } else {
-                | jmp ->deopt_return
+                | branch ->deopt_return
             }
             switch_section(Dst, SECTION_CODE);
         } else {
             if (!Dst->emitted_trace_check_for_line) {
-                | jne ->handle_tracing_or_signal_no_deferred_stack_new_line
+                | branch_ne ->handle_tracing_or_signal_no_deferred_stack_new_line
             } else {
-                | jne ->handle_tracing_or_signal_no_deferred_stack
+                | branch_ne ->handle_tracing_or_signal_no_deferred_stack
             }
         }
-        #endif
-        |.endif
         break;
     }
     }
@@ -3569,16 +3561,23 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     emit_mov_inst_addr_to_tmp(Dst, arg1_idx);
     // tmp points now to the beginning of the bytecode implementation
     // but we want to skip the signal check.
-    // We can't just directly jump after the signal check beause the jne instruction is variable size
-    // so instead jump before the conditional jump and set the flags so that we don't jump
-    // size of 'mov dword [lasti + offsetof(PyFrameObject, f_lasti)], inst_idx*2' = 8byte
-    //       + 'cmp qword [interrupt], 0' = 4byte (64bit cmp)
-    // Not that we are in the handle_signal label which can only be reached if we generated
-    // the code mentioned above.
+
     |.if ARCH==aarch64
-        | add tmp, tmp, #8 + 4
-        | cmp tmp, tmp // dummy to set the flags for 'bne ...' to fail
+        /*
+            mov tmp, #inst_idx*2
+            str Rw(tmp_idx), [f, #offsetof(PyFrameObject, f_lasti)]
+            ldr Rw(tmp_idx), [interrupt]
+            cmp Rw(tmp_idx), wzr
+            branch_ne
+        */
+        | add tmp, tmp, #5*4
     |.else
+        // We can't just directly jump after the signal check beause the jne instruction is variable size
+        // so instead jump before the conditional jump and set the flags so that we don't jump
+        // size of 'mov dword [lasti + offsetof(PyFrameObject, f_lasti)], inst_idx*2' = 8byte
+        //       + 'cmp qword [interrupt], 0' = 4byte (64bit cmp)
+        // Not that we are in the handle_signal label which can only be reached if we generated
+        // the code mentioned above.
         | add tmp, 8 + 4
         | cmp tmp, tmp // dummy to set the flags for 'jne ...' to fail
     |.endif
