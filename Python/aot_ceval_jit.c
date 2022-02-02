@@ -1408,6 +1408,27 @@ static void emit_jmp_to_lasti(Jit* Dst) {
 |.else
     | mov Rd(arg1_idx), [f + offsetof(PyFrameObject, f_lasti)]
 |.endif
+
+#if JIT_DEBUG
+    // generate code to check that the instruction we jump to had 'is_jmp_target' set
+    // every entry in the is_jmp_target array is 4 bytes long. 'lasti / 2' is the index
+|.if arch==aarch64
+    | adr arg2, ->is_jmp_target
+    | lsl tmp, arg1, #1
+    | ldr tmp, [arg2, tmp]
+    | cmp tmp, #0
+|.else
+    | lea arg2, [->is_jmp_target]
+    | cmp dword [arg2 + arg1*2], 0
+|.endif
+
+    | branch_ne >9
+    | mov arg1, f
+    emit_call_ext_func(Dst, debug_error_not_a_jump_target);
+
+    |9:
+#endif
+
     emit_jmp_to_inst_idx(Dst, arg1_idx);
 }
 
@@ -3561,7 +3582,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     emit_mov_inst_addr_to_tmp(Dst, arg1_idx);
     // tmp points now to the beginning of the bytecode implementation
     // but we want to skip the signal check.
-
     |.if ARCH==aarch64
         /*
             mov tmp, #inst_idx*2
@@ -3649,7 +3669,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         | ldp vs_preserved_reg, tmp_preserved_reg, [sp, #-32]
         | ldp f, tstate, [sp, #-48]
         | ldp vsp, interrupt, [sp, #-64]
-
         | ret
     |.else
         // remove stack variable
@@ -3737,16 +3756,15 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // will fill in the actual address after dasm_link
     switch_section(Dst, SECTION_OPCODE_ADDR);
     |->opcode_addr_begin:
-    //|.space Dst->num_opcodes * 4, 255 // fill all bytes with this value to catch bugs
     for (int i=0; i<Dst->num_opcodes; ++i) {
-        //|.long 255
-        |.nop
+        // fill all bytes with this value to catch bugs
+        |.long UINT_MAX
     }
 
 #if JIT_DEBUG
     |->is_jmp_target:
     for (int i=0; i<Dst->num_opcodes; ++i) {
-        //|.byte jit.is_jmp_target[i]
+        |.long jit.is_jmp_target[i]
     }
 #endif
 
