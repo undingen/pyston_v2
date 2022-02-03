@@ -785,57 +785,64 @@ static void switch_section(Jit* Dst, Section new_section) {
 |.endmacro
 
 // load a 64bit value relative to current SP into register
-static void emit_load64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
+static void emit_load64_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
 |.if arch==aarch64
-    | ldr Rx(r_dst), [sp, #offset_in_bytes]
+#if __aarch64__
+    // load/store with negative immediates can't be < -255
+    if (offset_in_bytes < -256) {
+        | sub tmp2, Rx(r_mem), #labs(offset_in_bytes)
+        | ldr Rx(r_dst), [tmp2]
+    } else {
+        | ldr Rx(r_dst), [Rx(r_mem), #offset_in_bytes]
+    }
+#endif
 |.else
-    | mov Rq(r_dst), [rsp + offset_in_bytes]
+    | mov Rq(r_dst), [Rq(r_mem)+ offset_in_bytes]
 |.endif
+}
+// store a 64bit value from register into SP relative memory location
+static void emit_store64_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
+|.if arch==aarch64
+    // load/store with negative immediates can't be < -255
+    if (offset_in_bytes < -256) {
+        | sub tmp2, Rx(r_mem), #labs(offset_in_bytes)
+        | str Rx(r_dst), [tmp2]
+    } else {
+        | str Rx(r_dst), [Rx(r_mem), #offset_in_bytes]
+    }
+|.else
+    | mov [Rq(mem_idx)+ offset_in_bytes], Rq(r_dst)
+|.endif
+}
+
+
+static void emit_load64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
+    emit_load64_mem_offset(Dst, r_dst, 31, offset_in_bytes);
 }
 
 // store a 64bit value from register into SP relative memory location
 static void emit_store64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-|.if arch==aarch64
-    | str Rx(r_dst), [sp, #offset_in_bytes]
-|.else
-    | mov [sp + offset_in_bytes], Rq(r_dst)
-|.endif
+    emit_store64_mem_offset(Dst, r_dst, 31, offset_in_bytes);
 }
 
 // load a 64bit value relative to current VSP into register
 static void emit_load64_vsp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-|.if arch==aarch64
-    | ldr Rx(r_dst), [vsp, #offset_in_bytes]
-|.else
-    | mov Rq(r_dst), [vsp + offset_in_bytes]
-|.endif
+    emit_load64_mem_offset(Dst, r_dst, vsp_idx, offset_in_bytes);
 }
 
 // store a 64bit value from register into VSP relative memory location
 static void emit_store64_vsp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-|.if arch==aarch64
-    | str Rx(r_dst), [vsp, #offset_in_bytes]
-|.else
-    | mov [vsp + offset_in_bytes], Rq(r_dst)
-|.endif
+    emit_store64_mem_offset(Dst, r_dst, vsp_idx, offset_in_bytes);
 }
 
 // load a 64bit value relative to current python frame into register
 static void emit_load64_f_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-|.if arch==aarch64
-    | ldr Rx(r_dst), [f, #offset_in_bytes]
-|.else
-    | mov Rq(r_dst), [f + offset_in_bytes]
-|.endif
+    emit_load64_mem_offset(Dst, r_dst, f_idx, offset_in_bytes);
 }
 
 // store a 64bit value from register into python frame relative memory location
 static void emit_store64_f_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-|.if arch==aarch64
-    | str Rx(r_dst), [f, #offset_in_bytes]
-|.else
-    | mov [f + offset_in_bytes], Rq(r_dst)
-|.endif
+    emit_store64_mem_offset(Dst, r_dst, f_idx, offset_in_bytes);
 }
 
 // moves the value stack pointer by num_values python objects
@@ -2387,6 +2394,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         // also used for the opcode_addr table
         |=>inst_idx:
 
+        fprintf(stderr, "%3d %s\t%d\n", inst_idx, get_opcode_name(opcode), oparg);
+
         // emits f->f_lasti update, signal and trace check
         emit_instr_start(Dst, inst_idx, opcode, oparg);
 
@@ -3127,27 +3136,15 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 // PyTupleObject stores the elements directly inside the object
                 // while PyListObject has ob_item which points to an array of elements to support resizing.
                 if (opcode == BUILD_LIST) {
-                    |.if ARCH==aarch64
-                        | ldr arg2, [res, #offsetof(PyListObject, ob_item)]
-                    |.else
-                        | mov arg2, [res + offsetof(PyListObject, ob_item)]
-                    |.endif
+                    emit_load64_mem_offset(Dst, arg2_idx, res_idx, offsetof(PyListObject, ob_item));
                 }
                 int i = oparg;
                 while (--i >= 0) {
                     deferred_vs_peek_owned(Dst, arg1_idx, (oparg - i));
                     if (opcode == BUILD_LIST) {
-                        |.if ARCH==aarch64
-                            | str arg1, [arg2, #8*i]
-                        |.else
-                            | mov [arg2 + 8*i], arg1
-                        |.endif
+                        emit_store64_mem_offset(Dst, arg1_idx, arg2_idx, 8*i);
                     } else {
-                        |.if ARCH==aarch64
-                            | str arg1, [res, #offsetof(PyTupleObject, ob_item) + 8*i]
-                        |.else
-                            | mov [res + offsetof(PyTupleObject, ob_item) + 8*i], arg1
-                        |.endif
+                        emit_store64_mem_offset(Dst, arg1_idx, res_idx, offsetof(PyTupleObject, ob_item) + 8*i);
                     }
                 }
                 deferred_vs_remove(Dst, oparg);
@@ -3164,19 +3161,15 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             break;
 
         case STORE_DEREF:
-            |.if ARCH==aarch64
-                JIT_ASSERT(0, "");
-            |.else
             deferred_vs_pop1_owned(Dst, arg2_idx);
             deferred_vs_convert_reg_to_stack(Dst);
             // PyObject *cell = freevars[oparg];
             emit_load_freevar(Dst, arg3_idx, oparg);
             // PyObject *oldobj = PyCell_GET(cell);
-            | mov arg1, [arg3 + offsetof(PyCellObject, ob_ref)]
+            emit_load64_mem_offset(Dst, arg1_idx, arg3_idx, offsetof(PyCellObject, ob_ref));
             // PyCell_SET(cell, v);
-            | mov [arg3 + offsetof(PyCellObject, ob_ref)], arg2
+            emit_store64_mem_offset(Dst, arg2_idx, arg3_idx, offsetof(PyCellObject, ob_ref));
             emit_xdecref_arg1(Dst);
-            |.endif
             break;
 
         case LOAD_DEREF:
@@ -3771,7 +3764,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #ifdef DASM_CHECKS
     int dasm_err = dasm_checkstep(Dst, -1);
     if (dasm_err) {
-        fprintf(stderr, "dynasm returned error %d", dasm_err);
+        fprintf(stderr, "dynasm returned error %x", dasm_err);
         JIT_ASSERT(0, "");
     }
 #endif
@@ -3782,7 +3775,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         fprintf(stderr, "dynasm link returned error %d", dasm_link_err);
         JIT_ASSERT(0, "");
     }
-    fprintf(stderr, "size: %d\n", size);
+    //fprintf(stderr, "size: %d\n", size);
 
     // Align code regions to cache line boundaries.
     // I don't know concretely that this is important but seems like
@@ -3792,7 +3785,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // Allocate jitted code regions in 256KB chunks:
     if (size > mem_chunk_bytes_remaining) {
         mem_chunk_bytes_remaining = size > (1<<18) ? size : (1<<18);
-        fprintf(stderr, "before mmap %ld %ld\n", mem_bytes_allocated, mem_chunk_bytes_remaining);
+        //fprintf(stderr, "before mmap %ld %ld\n", mem_bytes_allocated, mem_chunk_bytes_remaining);
         // allocate memory which address fits inside a 32bit pointer (makes sure we can use 32bit rip relative addressing)
 #ifdef MAP_32BIT
         void* new_chunk = mmap(0, mem_chunk_bytes_remaining, PROT_READ | PROT_WRITE, MAP_32BIT | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -3805,7 +3798,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             goto cleanup;
         }
         mem_chunk = new_chunk;
-        fprintf(stderr, "got addr %p\n", new_chunk);
+        //fprintf(stderr, "got addr %p\n", new_chunk);
 
         // we self modify (=AOTFuncs) so make it writable to
         mprotect(mem_chunk, mem_chunk_bytes_remaining, PROT_READ | PROT_EXEC | PROT_WRITE);
