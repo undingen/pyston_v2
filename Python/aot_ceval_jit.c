@@ -790,6 +790,23 @@ static void switch_section(Jit* Dst, Section new_section) {
 |.endmacro
 
 // load a 64bit value relative to current SP into register
+static void emit_load32_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
+|.if arch==aarch64
+#if __aarch64__
+    // load/store with negative immediates can't be < -255
+    if (offset_in_bytes < -256) {
+        | sub tmp2, Rx(r_mem), #labs(offset_in_bytes)
+        | ldr Rw(r_dst), [tmp2]
+    } else {
+        | ldr Rw(r_dst), [Rx(r_mem), #offset_in_bytes]
+    }
+#endif
+|.else
+    | mov Rd(r_dst), [Rq(r_mem)+ offset_in_bytes]
+|.endif
+}
+
+// load a 64bit value relative to current SP into register
 static void emit_load64_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
 |.if arch==aarch64
 #if __aarch64__
@@ -1085,7 +1102,7 @@ static void emit_mov_imm_using_diff(Jit* Dst, int r_idx, int other_idx, void* ad
 
 |.if arch==aarch64
 #ifdef __aarch64__
-    if (labs(diff) < 4096) {
+    if (labs(diff) <= 4096) {
         if (addr > other_addr) {
             | add Rx(r_idx), Rx(other_idx), #labs(diff)
         } else {
@@ -1405,11 +1422,7 @@ static void debug_error_not_a_jump_target(PyFrameObject* f) {
 
 // warning this will overwrite tmp, arg1 and arg2
 static void emit_jmp_to_lasti(Jit* Dst) {
-|.if arch==aarch64
-    | ldr Rw(arg1_idx), [f, #offsetof(PyFrameObject, f_lasti)]
-|.else
-    | mov Rd(arg1_idx), [f + offsetof(PyFrameObject, f_lasti)]
-|.endif
+    emit_load32_mem_offset(Dst, arg1_idx, f_idx, offsetof(PyFrameObject, f_lasti));
 
 #if JIT_DEBUG
     // generate code to check that the instruction we jump to had 'is_jmp_target' set
