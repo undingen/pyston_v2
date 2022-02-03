@@ -2371,8 +2371,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         // also used for the opcode_addr table
         |=>inst_idx:
 
-        fprintf(stderr, "%3d %s\t%d\n", inst_idx, get_opcode_name(opcode), oparg);
-
         // emits f->f_lasti update, signal and trace check
         emit_instr_start(Dst, inst_idx, opcode, oparg);
 
@@ -2892,7 +2890,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 |.if ARCH==aarch64
                 #ifdef __aarch64__
                     emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
-                    | cmp Rw(arg1_idx), #0 // 32bit comparison!
+                    | cmp Rw(res_idx), #0 // 32bit comparison!
                     | blt ->error // < 0, means error
                     | csel res, arg3, arg4, eq
                     // don't need to incref these are immortals
