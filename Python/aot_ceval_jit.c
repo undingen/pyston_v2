@@ -952,54 +952,6 @@ static void emit_incref(Jit* Dst, int r_idx) {
 |.endif
 }
 
-static void emit_if_res_0_error(Jit* Dst) {
-    JIT_ASSERT(Dst->deferred_vs_res_used == 0, "error this would not get decrefed");
-|.if arch==aarch64
-    | cmp res, #0
-|.else
-    | test res, res
-|.endif
-    | branch_eq ->error
-}
-
-static void emit_if_res_32b_not_0_error(Jit* Dst) {
-    JIT_ASSERT(Dst->deferred_vs_res_used == 0, "error this would not get decrefed");
-|.if arch==aarch64
-    | cmp Rw(res_idx), #0
-|.else
-    | test Rd(res_idx), Rd(res_idx)
-|.endif
-    | branch_ne ->error
-}
-
-static void emit_jump_by_n_bytecodes(Jit* Dst, int num_bytes, int inst_idx) {
-    int dst_idx = num_bytes/2+inst_idx+1;
-    JIT_ASSERT(Dst->is_jmp_target[dst_idx], "calculate_jmp_targets needs adjustment");
-    JIT_ASSERT(dst_idx >= 0 && dst_idx < Dst->num_opcodes, "");
-    | branch =>dst_idx
-}
-
-static void emit_jump_to_bytecode_n(Jit* Dst, int num_bytes) {
-    int dst_idx = num_bytes/2;
-    JIT_ASSERT(Dst->is_jmp_target[dst_idx], "calculate_jmp_targets needs adjustment");
-    JIT_ASSERT(dst_idx >= 0 && dst_idx < Dst->num_opcodes, "");
-    | branch =>dst_idx
-}
-
-static void emit_je_to_bytecode_n(Jit* Dst, int num_bytes) {
-    int dst_idx = num_bytes/2;
-    JIT_ASSERT(Dst->is_jmp_target[dst_idx], "calculate_jmp_targets needs adjustment");
-    JIT_ASSERT(dst_idx >= 0 && dst_idx < Dst->num_opcodes, "");
-    | branch_eq =>dst_idx
-}
-
-static void emit_jg_to_bytecode_n(Jit* Dst, int num_bytes) {
-    int dst_idx = num_bytes/2;
-    JIT_ASSERT(Dst->is_jmp_target[dst_idx], "calculate_jmp_targets needs adjustment");
-    JIT_ASSERT(dst_idx >= 0 && dst_idx < Dst->num_opcodes, "");
-    | branch_gt =>dst_idx
-}
-
 // moves a 64bit register from on to the other
 static void emit_mov64_reg(Jit* Dst, int r_dst, int r_src) {
     if (r_dst == r_src)
@@ -1043,6 +995,54 @@ static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.endif
 }
 
+static void emit_cmp32_imm(Jit* Dst, int r_idx, unsigned long val) {
+|.if arch==aarch64
+#ifdef __aarch64__
+    if (val <= 4096 && val >= -4095 /* this will automatically emit cmn */) {
+        | cmp Rw(r_idx), #val
+    } else {
+        emit_mov_imm(Dst, tmp_idx, val);
+        | cmp Rw(r_idx), Rw(tmp_idx)
+    }
+#endif
+|.else
+#ifndef __aarch64__
+    if (val == 0) {
+        | test Rd(r_idx), Rd(r_idx)
+    } else if (IS_32BIT_VAL(val)) {
+        | cmp Rd(r_idx), (unsigned int)val
+    } else {
+        JIT_ASSERT(0, "should not reach this");
+    }
+#endif
+|.endif
+}
+
+static void emit_cmp64_imm(Jit* Dst, int r_idx, unsigned long val) {
+|.if arch==aarch64
+#ifdef __aarch64__
+    if (val <= 4096 && val >= -4095 /* this will automatically emit cmn */) {
+        | cmp Rx(r_idx), #val
+    } else {
+        emit_mov_imm(Dst, tmp_idx, val);
+        | cmp Rx(r_idx), tmp
+    }
+#endif
+|.else
+#ifndef __aarch64__
+    if (val == 0) {
+        | test Rq(r_idx), Rq(r_idx)
+    } else if (IS_32BIT_VAL(val)) {
+        | cmp Rq(r_idx), (unsigned int)val
+    } else {
+        | mov64 tmp, (unsigned long)val
+        | cmp Rq(r_idx), tmp
+    }
+#endif
+|.endif
+}
+
+
 // moves a 32bit or 64bit immediate into a 64 bit memory location uses smallest encoding
 static void emit_store64_mem_offset_imm(Jit* Dst, unsigned long val, int r_mem, long offset) {
 |.if arch==aarch64
@@ -1072,29 +1072,6 @@ static void emit_store64_sp_offset_imm(Jit* Dst, long offset, unsigned long val)
 }
 static void emit_store64_f_offset_imm(Jit* Dst, long offset, unsigned long val) {
     return emit_store64_mem_offset_imm(Dst, val, f_idx, offset);
-}
-
-static void emit_cmp_imm(Jit* Dst, int r_idx, unsigned long val) {
-|.if arch==aarch64
-#ifdef __aarch64__
-    if (val < 4096) {
-        JIT_ASSERT(0, "not tested yet");
-        | cmp Rx(r_idx), #val
-    } else {
-        emit_mov_imm(Dst, tmp_idx, val);
-        | cmp Rx(r_idx), tmp
-    }
-#endif
-|.else
-#ifndef __aarch64__
-    if (IS_32BIT_VAL(val)) {
-        | cmp Rq(r_idx), (unsigned int)val
-    } else {
-        | mov64 tmp, (unsigned long)val
-        | cmp Rq(r_idx), tmp
-    }
-#endif
-|.endif
 }
 
 // Loads a register `r_idx` with a value `addr`, potentially doing a lea
@@ -1132,6 +1109,47 @@ static void emit_mov_imm_using_diff(Jit* Dst, int r_idx, int other_idx, void* ad
 static void emit_mov_imm2(Jit* Dst, int r_idx1, void* addr1, int r_idx2, void* addr2) {
     emit_mov_imm(Dst, r_idx1, (unsigned long)addr1);
     emit_mov_imm_using_diff(Dst, r_idx2, r_idx1, addr2, addr1);
+}
+
+
+static void emit_if_res_0_error(Jit* Dst) {
+    JIT_ASSERT(Dst->deferred_vs_res_used == 0, "error this would not get decrefed");
+    emit_cmp64_imm(Dst, res_idx, 0);
+    | branch_eq ->error
+}
+
+static void emit_if_res_32b_not_0_error(Jit* Dst) {
+    JIT_ASSERT(Dst->deferred_vs_res_used == 0, "error this would not get decrefed");
+    emit_cmp32_imm(Dst, res_idx, 0);
+    | branch_ne ->error
+}
+
+static void emit_jump_by_n_bytecodes(Jit* Dst, int num_bytes, int inst_idx) {
+    int dst_idx = num_bytes/2+inst_idx+1;
+    JIT_ASSERT(Dst->is_jmp_target[dst_idx], "calculate_jmp_targets needs adjustment");
+    JIT_ASSERT(dst_idx >= 0 && dst_idx < Dst->num_opcodes, "");
+    | branch =>dst_idx
+}
+
+static void emit_jump_to_bytecode_n(Jit* Dst, int num_bytes) {
+    int dst_idx = num_bytes/2;
+    JIT_ASSERT(Dst->is_jmp_target[dst_idx], "calculate_jmp_targets needs adjustment");
+    JIT_ASSERT(dst_idx >= 0 && dst_idx < Dst->num_opcodes, "");
+    | branch =>dst_idx
+}
+
+static void emit_je_to_bytecode_n(Jit* Dst, int num_bytes) {
+    int dst_idx = num_bytes/2;
+    JIT_ASSERT(Dst->is_jmp_target[dst_idx], "calculate_jmp_targets needs adjustment");
+    JIT_ASSERT(dst_idx >= 0 && dst_idx < Dst->num_opcodes, "");
+    | branch_eq =>dst_idx
+}
+
+static void emit_jg_to_bytecode_n(Jit* Dst, int num_bytes) {
+    int dst_idx = num_bytes/2;
+    JIT_ASSERT(Dst->is_jmp_target[dst_idx], "calculate_jmp_targets needs adjustment");
+    JIT_ASSERT(dst_idx >= 0 && dst_idx < Dst->num_opcodes, "");
+    | branch_gt =>dst_idx
 }
 
 static void emit_call_ext_func(Jit* Dst, void* addr) {
@@ -1733,20 +1751,16 @@ static void deferred_vs_apply_if_same_var(Jit* Dst, int var_idx) {
 }
 
 static void emit_jump_if_false(Jit* Dst, int oparg, RefStatus ref_status) {
-    emit_cmp_imm(Dst, arg1_idx, (unsigned long)Py_False);
+    emit_cmp64_imm(Dst, arg1_idx, (unsigned long)Py_False);
     emit_je_to_bytecode_n(Dst, oparg);
-    emit_cmp_imm(Dst, arg1_idx, (unsigned long)Py_True);
+    emit_cmp64_imm(Dst, arg1_idx, (unsigned long)Py_True);
     | branch_ne >1
 
     switch_section(Dst, SECTION_COLD);
     |1:
     void* func = jit_use_aot ? PyObject_IsTrueProfile : PyObject_IsTrue;
     emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
-    |.if arch==aarch64
-        | cmp Rw(res_idx), #0
-    |.else
-        | cmp Rd(res_idx), 0
-    |.endif
+    emit_cmp32_imm(Dst, res_idx, 0);
     emit_je_to_bytecode_n(Dst, oparg);
     | branch_lt ->error
     | branch >3
@@ -1757,20 +1771,16 @@ static void emit_jump_if_false(Jit* Dst, int oparg, RefStatus ref_status) {
 }
 
 static void emit_jump_if_true(Jit* Dst, int oparg, RefStatus ref_status) {
-    emit_cmp_imm(Dst, arg1_idx, (unsigned long)Py_True);
+    emit_cmp64_imm(Dst, arg1_idx, (unsigned long)Py_True);
     emit_je_to_bytecode_n(Dst, oparg);
-    emit_cmp_imm(Dst, arg1_idx, (unsigned long)Py_False);
+    emit_cmp64_imm(Dst, arg1_idx, (unsigned long)Py_False);
     | branch_ne >1
 
     switch_section(Dst, SECTION_COLD);
     |1:
     void* func = jit_use_aot ? PyObject_IsTrueProfile : PyObject_IsTrue;
     emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
-    |.if arch==aarch64
-        | cmp Rw(res_idx), #0
-    |.else
-        | cmp Rd(res_idx), 0
-    |.endif
+    emit_cmp32_imm(Dst, res_idx, 0);
     emit_jg_to_bytecode_n(Dst, oparg);
     | branch_lt ->error
     | branch >3
@@ -2292,7 +2302,7 @@ __attribute__((optimize("-O0"))) // enable to make "source tools/dis_jit_gdb.py"
 #endif
 void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #ifdef __aarch64__
-    if (memcmp(PyUnicode_AsUTF8(co->co_name), "armjit", 6) != 0)
+    if (0 && memcmp(PyUnicode_AsUTF8(co->co_name), "armjit", 6) != 0)
         // disable JIT on ARM
         return NULL;
 #endif
@@ -2436,11 +2446,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_apply_if_same_var(Dst, oparg);
             emit_load64_f_offset(Dst, arg2_idx, get_fastlocal_offset(oparg));
             if (!Dst->known_defined[oparg] /* can be null */) {
-                |.if ARCH==aarch64
-                    | cmp arg2, #0
-                |.else
-                    | test arg2, arg2
-                |.endif
+                emit_cmp64_imm(Dst, arg2_idx, 0);
                 | branch_eq >1
 
                 switch_section(Dst, SECTION_COLD);
@@ -2857,12 +2863,11 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 | ldr tmp, [tmp, #offsetof(PyTypeObject, tp_iternext)]
                 | blr tmp
                 | mov res, real_res
-                | cmp res, #0
             |.else
                 | mov tmp, [arg1 + offsetof(PyObject, ob_type)]
                 | call qword [tmp + offsetof(PyTypeObject, tp_iternext)]
-                | test res, res
             |.endif
+            emit_cmp64_imm(Dst, res_idx, 0);
             | branch_eq >1
 
             switch_section(Dst, SECTION_COLD);
@@ -2890,8 +2895,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 |.if ARCH==aarch64
                 #ifdef __aarch64__
                     emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
-                    | cmp Rw(res_idx), #0 // 32bit comparison!
-                    | blt ->error // < 0, means error
+                    emit_cmp32_imm(Dst, res_idx, 0); // 32bit comparison!
+                    | branch_lt ->error // < 0, means error
                     | csel res, arg3, arg4, eq
                     // don't need to incref these are immortals
                 #endif
@@ -2899,8 +2904,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 #ifndef __aarch64__
                     | mov Rd(arg1_idx), Rd(res_idx) // save result for comparison
                     emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
-                    | cmp Rd(arg1_idx), 0 // 32bit comparison!
-                    | jl ->error // < 0, means error
+                    emit_cmp32_imm(Dst, arg1_idx, 0); // 32bit comparison!
+                    | branch_lt ->error // < 0, means error
                     | cmovne Rq(res_idx), Rq(tmp_idx)
                     // don't need to incref these are immortals
                 #endif
@@ -2963,11 +2968,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             RefStatus ref_status = OWNED;
             deferred_vs_pop1_owned(Dst, arg1_idx);
             deferred_vs_apply(Dst);
-            |.if ARCH==aarch64
-                | cmp arg1, #0
-            |.else
-                | test arg1, arg1
-            |.endif
+            emit_cmp64_imm(Dst, arg1_idx, 0);
             | branch_ne ->end_finally
 
             if (!end_finally_label) {
@@ -3153,13 +3154,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             // PyObject *cell = freevars[oparg];
             emit_load_freevar(Dst, arg1_idx, oparg);
             // PyObject *value = PyCell_GET(cell);
-            |.if ARCH==aarch64
-                | ldr res, [arg1, #offsetof(PyCellObject, ob_ref)]
-                | cmp res, #0
-            |.else
-                | mov res, [arg1 + offsetof(PyCellObject, ob_ref)]
-                | test res, res
-            |.endif
+            emit_load64_mem_offset(Dst, res_idx, arg1_idx, offsetof(PyCellObject, ob_ref));
+            emit_cmp64_imm(Dst, res_idx, 0);
             | branch_eq >1
 
             switch_section(Dst, SECTION_COLD);
@@ -3422,11 +3418,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                     // res == 1 means execute next opcode (=fallthrough)
                     // res == 2 means goto exit_yielding
                     emit_if_res_0_error(Dst);
-                    |.if ARCH==aarch64
-                        | cmp res, #1
-                    |.else
-                        | cmp res, 1
-                    |.endif
+                    emit_cmp64_imm(Dst, res_idx, 1);
                     | branch_ne ->exit_yielding
                     break;
 
@@ -3443,8 +3435,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                     |.if ARCH==aarch64
                         JIT_ASSERT(0, "");
                     |.else
-                    | cmp res, 2
-                    | je ->exception_unwind
+                    emit_cmp64_imm(Dst, res_idx, 2);
+                    | branch_eq ->exception_unwind
                     emit_jump_by_n_bytecodes(Dst, oparg, inst_idx);
                     |.endif
                     break;
@@ -3525,11 +3517,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // we have to preserve res because it's used by our deferred stack optimizations
     | mov tmp_preserved_reg, res
     emit_call_ext_func(Dst, eval_breaker_jit_helper);
-    |.if ARCH==aarch64
-        | cmp Rw(res_idx), wzr
-    |.else
-        | test Rd(res_idx), Rd(res_idx)
-    |.endif
+    emit_cmp32_imm(Dst, res_idx, 0);
     // on error we have to decref 'res' (which is now in 'tmp_preserved_reg')
     | branch_ne ->error_decref_tmp_preserved_reg
     // no error, restore 'res' and continue executing
