@@ -705,10 +705,15 @@ static unsigned long jit_stat_load_global_hit, jit_stat_load_global_miss, jit_st
 |.define tmp, arg6
 #define tmp_idx arg6_idx
 
-// ARM64 requires one more temporary reg because it's more verbose
+| define_reg sp_reg, sp_reg_idx, rsp, 4, sp, 31
+
 |.if ARCH==aarch64
+    // ARM64 requires one more temporary reg because it's more verbose
     |.define tmp2, x6
     #define tmp2_idx 6
+
+    |.define zero_reg, xzr
+    #define zero_reg_idx 31
 |.endif
 
 // GET_DEFERRED[-1] == top deferred stack entry
@@ -817,12 +822,12 @@ static void emit_store64_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_
 
 
 static void emit_load64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-    emit_load64_mem_offset(Dst, r_dst, 31, offset_in_bytes);
+    emit_load64_mem_offset(Dst, r_dst, sp_reg_idx, offset_in_bytes);
 }
 
 // store a 64bit value from register into SP relative memory location
 static void emit_store64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-    emit_store64_mem_offset(Dst, r_dst, 31, offset_in_bytes);
+    emit_store64_mem_offset(Dst, r_dst, sp_reg_idx, offset_in_bytes);
 }
 
 // load a 64bit value relative to current VSP into register
@@ -1039,62 +1044,34 @@ static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
 }
 
 // moves a 32bit or 64bit immediate into a 64 bit memory location uses smallest encoding
-static void emit_store64_vsp_offset_imm(Jit* Dst, long offset, unsigned long val) {
+static void emit_store64_mem_offset_imm(Jit* Dst, unsigned long val, int r_mem, long offset) {
 |.if arch==aarch64
 #ifdef __aarch64__
     if (val == 0) {
-        | str xzr, [vsp, #offset]
+        emit_store64_mem_offset(Dst, zero_reg_idx, r_mem, offset);
         return;
     }
 #endif
 |.else
 #ifndef __aarch64__
     if (IS_32BIT_VAL(val)) {
-        | mov qword [vsp + offset], (unsigned int)val
+        | mov qword [Rq(r_mem) + offset], (unsigned int)val
         return;
     }
 #endif
 |.endif
     emit_mov_imm(Dst, tmp_idx, val);
-    emit_store64_vsp_offset(Dst, tmp_idx, offset);
+    emit_store64_mem_offset(Dst, tmp_idx, r_mem, offset);
+}
+
+static void emit_store64_vsp_offset_imm(Jit* Dst, long offset, unsigned long val) {
+    return emit_store64_mem_offset_imm(Dst, val, vsp_idx, offset);
 }
 static void emit_store64_sp_offset_imm(Jit* Dst, long offset, unsigned long val) {
-|.if arch==aarch64
-#ifdef __aarch64__
-    if (val == 0) {
-        | str xzr, [sp, #offset]
-        return;
-    }
-#endif
-|.else
-#ifndef __aarch64__
-    if (IS_32BIT_VAL(val)) {
-        | mov qword [sp + offset], (unsigned int)val
-        return;
-    }
-#endif
-|.endif
-    emit_mov_imm(Dst, tmp_idx, val);
-    emit_store64_sp_offset(Dst, tmp_idx, offset);
+    return emit_store64_mem_offset_imm(Dst, val, sp_reg_idx, offset);
 }
 static void emit_store64_f_offset_imm(Jit* Dst, long offset, unsigned long val) {
-|.if arch==aarch64
-#ifdef __aarch64__
-    if (val == 0) {
-        | str xzr, [f, #offset]
-        return;
-    }
-#endif
-|.else
-#ifndef __aarch64__
-    if (IS_32BIT_VAL(val)) {
-        | mov qword [f + offset], (unsigned int)val
-        return;
-    }
-#endif
-|.endif
-    emit_mov_imm(Dst, tmp_idx, val);
-    emit_store64_f_offset(Dst, tmp_idx, offset);
+    return emit_store64_mem_offset_imm(Dst, val, f_idx, offset);
 }
 
 static void emit_cmp_imm(Jit* Dst, int r_idx, unsigned long val) {
