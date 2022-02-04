@@ -4491,11 +4491,11 @@ _PyEval_EvalFrame_AOT_JIT(PyFrameObject *f, PyThreadState * const tstate, PyObje
 
 continue_jit:
     {
-        //fprintf(stderr, "entering jit: %p\n", stack_pointer);
+        //fprintf(stderr, "entering jit: %p stack_level %d lasti %d\n", stack_pointer, STACK_LEVEL(), f->f_lasti);
         JitRetVal ret = jit_code(f, tstate, stack_pointer);
         stack_pointer = ret.stack_pointer;
         int lower_bits = ret.ret_val & 3;
-        //fprintf(stderr, "jit ret: %d %p %p\n", lower_bits, ret.ret_val, stack_pointer);
+        //fprintf(stderr, "jit ret: %d %p %p stack_level %d lasti %d\n", lower_bits, ret.ret_val, stack_pointer, STACK_LEVEL(), f->f_lasti);
         if (lower_bits == 0) {
             retval = (PyObject*)ret.ret_val;
             if (retval){
@@ -4544,6 +4544,7 @@ error:
 exception_unwind:
     /* Unwind stacks if an exception occurred */
     while (f->f_iblock > 0) {
+        //fprintf("f->f_iblock: %d\n", f->f_iblock);
         /* Pop the current block. */
         PyTryBlock *b = &f->f_blockstack[--f->f_iblock];
 

@@ -863,7 +863,7 @@ static void emit_cmp32_imm(Jit* Dst, int r_idx, unsigned long val) {
 static void emit_cmp64_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.if arch==aarch64
 #ifdef __aarch64__
-    if (val <= (unsigned long)4095 && val >= (unsigned long)-4095 /* this will automatically emit cmn */) {
+    if ((long)val <= 4095 && (long)val >= -4095 /* this will automatically emit cmn */) {
         | cmp Rx(r_idx), #val
     } else {
         emit_mov_imm(Dst, tmp_idx, val);
@@ -2358,6 +2358,10 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     if (0 && memcmp(PyUnicode_AsUTF8(co->co_name), "armjit", 6) != 0)
         // disable JIT on ARM
         return NULL;
+
+    //if (147 == co->co_firstlineno || 1168 == co->co_firstlineno)
+    //    return NULL;
+    //if (78 != co->co_firstlineno) return NULL;
 #endif
 
     if (mem_bytes_used_max <= mem_bytes_used) // stop emitting code we used up all memory
@@ -3032,7 +3036,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 end_finally_label = 1;
                 switch_section(Dst, SECTION_COLD);
                 |->end_finally:
-                emit_mov_imm(Dst, tmp_idx, (unsigned int)&PyLong_Type);
+                emit_mov_imm(Dst, tmp_idx, (unsigned long)&PyLong_Type);
                 |.if ARCH==aarch64
                     | ldr arg2, [arg1, #offsetof(PyObject, ob_type)]
                     | cmp tmp, arg2

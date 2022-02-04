@@ -17,7 +17,9 @@ def stop_handler(event):
 
     gdb.execute("frame 1")
     co = gdb.parse_and_eval("co")
-    print("Dissasembly of", gdb.parse_and_eval("PyUnicode_AsUTF8(co->co_name)"))
+    def getPythonStr(cmd):
+        return str(gdb.parse_and_eval(f"PyUnicode_AsUTF8({cmd})")).split('"')[1]
+    print(f"Dissasembly of {getPythonStr('co->co_filename')}:{int(gdb.parse_and_eval('co->co_firstlineno'))} {getPythonStr('co->co_name')}")
 
     num_opcodes = int(gdb.parse_and_eval("jit.num_opcodes"))
     for i in range(num_opcodes):
