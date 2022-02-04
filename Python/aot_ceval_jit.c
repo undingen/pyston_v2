@@ -789,16 +789,107 @@ static void switch_section(Jit* Dst, Section new_section) {
 |.endif
 |.endmacro
 
+// moves a 64bit register from on to the other
+static void emit_mov64_reg(Jit* Dst, int r_dst, int r_src) {
+    if (r_dst == r_src)
+        return;
+    |.if arch==aarch64
+        | mov Rx(r_dst), Rx(r_src)
+    |.else
+        | mov Rq(r_dst), Rq(r_src)
+    |.endif
+}
+
+// moves a 32bit or 64bit immediate into a register uses smallest encoding
+static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
+|.if arch==aarch64
+#ifdef __aarch64__
+    | movz Rx(r_idx), #(val >>  0) & UINT16_MAX
+    if ((val >> 16) & UINT16_MAX) {
+        | movk Rx(r_idx), #(val >> 16) & UINT16_MAX, lsl #16
+    }
+    if ((val >> 32) & UINT16_MAX) {
+        | movk Rx(r_idx), #(val >> 32) & UINT16_MAX, lsl #32
+    }
+    if ((val >> 48) & UINT16_MAX) {
+        | movk Rx(r_idx), #(val >> 48) & UINT16_MAX, lsl #48
+    }
+#endif
+|.else
+#ifndef __aarch64__
+    if (val == 0) {
+        | xor Rd(r_idx), Rd(r_idx)
+    } else if (IS_32BIT_VAL(val)) {
+        | mov Rd(r_idx), (unsigned int)val
+    } else {
+        | mov64 Rq(r_idx), (unsigned long)val
+    }
+#endif
+|.endif
+}
+
+static void emit_cmp32_imm(Jit* Dst, int r_idx, unsigned long val) {
+|.if arch==aarch64
+#ifdef __aarch64__
+    if (val <= (unsigned long)4095 && val >= (unsigned long)-4095 /* this will automatically emit cmn */) {
+        | cmp Rw(r_idx), #val
+    } else {
+        emit_mov_imm(Dst, tmp_idx, val);
+        | cmp Rw(r_idx), Rw(tmp_idx)
+    }
+#endif
+|.else
+#ifndef __aarch64__
+    if (val == 0) {
+        | test Rd(r_idx), Rd(r_idx)
+    } else if (IS_32BIT_VAL(val)) {
+        | cmp Rd(r_idx), (unsigned int)val
+    } else {
+        JIT_ASSERT(0, "should not reach this");
+    }
+#endif
+|.endif
+}
+
+static void emit_cmp64_imm(Jit* Dst, int r_idx, unsigned long val) {
+|.if arch==aarch64
+#ifdef __aarch64__
+    if (val <= (unsigned long)4095 && val >= (unsigned long)-4095 /* this will automatically emit cmn */) {
+        | cmp Rx(r_idx), #val
+    } else {
+        emit_mov_imm(Dst, tmp_idx, val);
+        | cmp Rx(r_idx), tmp
+    }
+#endif
+|.else
+#ifndef __aarch64__
+    if (val == 0) {
+        | test Rq(r_idx), Rq(r_idx)
+    } else if (IS_32BIT_VAL(val)) {
+        | cmp Rq(r_idx), (unsigned int)val
+    } else {
+        | mov64 tmp, (unsigned long)val
+        | cmp Rq(r_idx), tmp
+    }
+#endif
+|.endif
+}
+
+// both bounds are inclusive
+static int is_in_range(long val, long min_val, long max_val) {
+    return val >= min_val && val <= max_val;
+}
+
 // load a 64bit value relative to current SP into register
 static void emit_load32_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
 |.if arch==aarch64
 #if __aarch64__
-    // load/store with negative immediates can't be < -255
-    if (offset_in_bytes < -256) {
-        | sub tmp2, Rx(r_mem), #labs(offset_in_bytes)
-        | ldr Rw(r_dst), [tmp2]
-    } else {
+    if (is_in_range(offset_in_bytes, -256, 255) ||
+        (is_in_range(offset_in_bytes, 0, 32760) && offset_in_bytes % 8 == 0))  {
         | ldr Rw(r_dst), [Rx(r_mem), #offset_in_bytes]
+    } else {
+        emit_mov_imm(Dst, tmp2_idx, offset_in_bytes);
+        | ldr Rw(r_dst), [Rx(r_mem), tmp2]
     }
 #endif
 |.else
@@ -810,27 +901,28 @@ static void emit_load32_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_i
 static void emit_load64_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
 |.if arch==aarch64
 #if __aarch64__
-    // load/store with negative immediates can't be < -255
-    if (offset_in_bytes < -256) {
-        | sub tmp2, Rx(r_mem), #labs(offset_in_bytes)
-        | ldr Rx(r_dst), [tmp2]
-    } else {
+    if (is_in_range(offset_in_bytes, -256, 255) ||
+        (is_in_range(offset_in_bytes, 0, 32760) && offset_in_bytes % 8 == 0))  {
         | ldr Rx(r_dst), [Rx(r_mem), #offset_in_bytes]
+    } else {
+        emit_mov_imm(Dst, tmp2_idx, offset_in_bytes);
+        | ldr Rx(r_dst), [Rx(r_mem), tmp2]
     }
 #endif
 |.else
     | mov Rq(r_dst), [Rq(r_mem)+ offset_in_bytes]
 |.endif
 }
+
 // store a 64bit value from register into SP relative memory location
 static void emit_store64_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
 |.if arch==aarch64
-    // load/store with negative immediates can't be < -255
-    if (offset_in_bytes < -256) {
-        | sub tmp2, Rx(r_mem), #labs(offset_in_bytes)
-        | str Rx(r_dst), [tmp2]
-    } else {
+    if (is_in_range(offset_in_bytes, -256, 255) ||
+        (is_in_range(offset_in_bytes, 0, 32760) && offset_in_bytes % 8 == 0))  {
         | str Rx(r_dst), [Rx(r_mem), #offset_in_bytes]
+    } else {
+        emit_mov_imm(Dst, tmp2_idx, offset_in_bytes);
+        | str Rx(r_dst), [Rx(r_mem), tmp2]
     }
 |.else
     | mov [Rq(mem_idx)+ offset_in_bytes], Rq(r_dst)
@@ -867,14 +959,36 @@ static void emit_store64_f_offset(Jit* Dst, int r_dst, unsigned long offset_in_b
     emit_store64_mem_offset(Dst, r_dst, f_idx, offset_in_bytes);
 }
 
+
+#define FITS_IN_12BIT(x) ((((x)>>12)<<12) == (x))
+#define FITS_IN_12BIT_OR_SHIFT(x) ((((x)>>12)<<12) == (x) || FITS_IN_12BIT(x))
+
+static int fits_in_12bit(long val) {
+    return (val & 0xFFF) == val;
+}
+
+static int fits_in_12bit_with_12bit_shift(long val) {
+    return (val & 0xFFF) == 0 && fits_in_12bit(val>>12);
+}
+
 // moves the value stack pointer by num_values python objects
 static void emit_adjust_vs(Jit* Dst, int num_values) {
 |.if arch==aarch64
 #ifdef __aarch64__
-    if (num_values > 0) {
-        | add vsp, vsp, #8*num_values
-    } else if (num_values < 0) {
-        | sub vsp, vsp, #8*-num_values
+    int offset_abs = abs(8*num_values);
+    if (fits_in_12bit(offset_abs) || fits_in_12bit_with_12bit_shift(offset_abs)) {
+        if (num_values > 0) {
+            | add vsp, vsp, #offset_abs
+        } else if (num_values < 0) {
+            | sub vsp, vsp, #offset_abs
+        }
+    } else {
+        emit_mov_imm(Dst, tmp_idx, offset_abs);
+        if (num_values > 0) {
+            | add vsp, vsp, tmp
+        } else {
+            | sub vsp, vsp, tmp
+        }
     }
 #else
 |.else
@@ -969,96 +1083,6 @@ static void emit_incref(Jit* Dst, int r_idx) {
 |.endif
 }
 
-// moves a 64bit register from on to the other
-static void emit_mov64_reg(Jit* Dst, int r_dst, int r_src) {
-    if (r_dst == r_src)
-        return;
-    |.if arch==aarch64
-        | mov Rx(r_dst), Rx(r_src)
-    |.else
-        | mov Rq(r_dst), Rq(r_src)
-    |.endif
-}
-
-// moves a 32bit or 64bit immediate into a register uses smallest encoding
-static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
-|.if arch==aarch64
-#ifdef __aarch64__
-    if (0 && val == 0) { // thinks this is acutally not faster
-        | mov Rx(r_idx), xzr
-        return;
-    }
-    | movz Rx(r_idx), #(val >>  0) & UINT16_MAX
-    if ((val >> 16) & UINT16_MAX) {
-        | movk Rx(r_idx), #(val >> 16) & UINT16_MAX, lsl #16
-    }
-    if ((val >> 32) & UINT16_MAX) {
-        | movk Rx(r_idx), #(val >> 32) & UINT16_MAX, lsl #32
-    }
-    if ((val >> 48) & UINT16_MAX) {
-        | movk Rx(r_idx), #(val >> 48) & UINT16_MAX, lsl #48
-    }
-#endif
-|.else
-#ifndef __aarch64__
-    if (val == 0) {
-        | xor Rd(r_idx), Rd(r_idx)
-    } else if (IS_32BIT_VAL(val)) {
-        | mov Rd(r_idx), (unsigned int)val
-    } else {
-        | mov64 Rq(r_idx), (unsigned long)val
-    }
-#endif
-|.endif
-}
-
-static void emit_cmp32_imm(Jit* Dst, int r_idx, unsigned long val) {
-|.if arch==aarch64
-#ifdef __aarch64__
-    if (val <= 4096 && val >= -4095 /* this will automatically emit cmn */) {
-        | cmp Rw(r_idx), #val
-    } else {
-        emit_mov_imm(Dst, tmp_idx, val);
-        | cmp Rw(r_idx), Rw(tmp_idx)
-    }
-#endif
-|.else
-#ifndef __aarch64__
-    if (val == 0) {
-        | test Rd(r_idx), Rd(r_idx)
-    } else if (IS_32BIT_VAL(val)) {
-        | cmp Rd(r_idx), (unsigned int)val
-    } else {
-        JIT_ASSERT(0, "should not reach this");
-    }
-#endif
-|.endif
-}
-
-static void emit_cmp64_imm(Jit* Dst, int r_idx, unsigned long val) {
-|.if arch==aarch64
-#ifdef __aarch64__
-    if (val <= 4096 && val >= -4095 /* this will automatically emit cmn */) {
-        | cmp Rx(r_idx), #val
-    } else {
-        emit_mov_imm(Dst, tmp_idx, val);
-        | cmp Rx(r_idx), tmp
-    }
-#endif
-|.else
-#ifndef __aarch64__
-    if (val == 0) {
-        | test Rq(r_idx), Rq(r_idx)
-    } else if (IS_32BIT_VAL(val)) {
-        | cmp Rq(r_idx), (unsigned int)val
-    } else {
-        | mov64 tmp, (unsigned long)val
-        | cmp Rq(r_idx), tmp
-    }
-#endif
-|.endif
-}
-
 
 // moves a 32bit or 64bit immediate into a 64 bit memory location uses smallest encoding
 static void emit_store64_mem_offset_imm(Jit* Dst, unsigned long val, int r_mem, long offset) {
@@ -1102,7 +1126,7 @@ static void emit_mov_imm_using_diff(Jit* Dst, int r_idx, int other_idx, void* ad
 
 |.if arch==aarch64
 #ifdef __aarch64__
-    if (labs(diff) <= 4096) {
+    if (labs(diff) <= 4095) {
         if (addr > other_addr) {
             | add Rx(r_idx), Rx(other_idx), #labs(diff)
         } else {
@@ -2388,7 +2412,16 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 Dst->known_defined[i] = 1; // function arg is defined
             }
         }
-
+/*
+        fprintf(stderr, "%3d %50s %d\n", inst_idx, get_opcode_name(opcode), oparg);
+        #ifdef DASM_CHECKS
+            int dasm_err = dasm_checkstep(Dst, -1);
+            if (dasm_err) {
+                fprintf(stderr, "dynasm returned error %x", dasm_err);
+                JIT_ASSERT(0, "");
+            }
+        #endif
+*/
         // set jump target for current inst index
         // we can later jump here via =>oparg etc..
         // also used for the opcode_addr table
@@ -2418,7 +2451,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case LOAD_FAST:
             if (!Dst->known_defined[oparg] /* can be null */) {
                 |.if ARCH==aarch64
-                    | ldr tmp, [f, #get_fastlocal_offset(oparg)]
+                    emit_load64_f_offset(Dst, tmp_idx, get_fastlocal_offset(oparg));
                     | cmp tmp, #0
                 |.else
                     | cmp qword [f + get_fastlocal_offset(oparg)], 0
@@ -2843,7 +2876,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 num_vs_args += 1;
 
                 |.if ARCH==aarch64
-                    | ldr tmp, [vsp, #-8*num_vs_args]
+                    emit_load64_vsp_offset(Dst, tmp_idx, -8*num_vs_args);
                     | cmp tmp, #0
                     | cinc arg3, arg3, ne
                 |.else
@@ -3191,11 +3224,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 emit_incref(Dst, res_idx);
                 deferred_vs_push(Dst, REGISTER, res_idx);
             } else { // DELETE_DEREF
-                |.if ARCH==aarch64
-                    | str xzr, [arg1, #offsetof(PyCellObject, ob_ref)]
-                |.else
-                    | mov qword [arg1 + offsetof(PyCellObject, ob_ref)], 0
-                |.endif
+                emit_store64_mem_offset_imm(Dst, 0, arg1_idx, offsetof(PyCellObject, ob_ref));
                 emit_decref(Dst, res_idx, 0 /*= don't preserve res */);
             }
             break;
