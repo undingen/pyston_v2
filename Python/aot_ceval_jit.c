@@ -149,6 +149,8 @@ typedef struct CallMethodHint {
 
 typedef struct Jit {
     struct dasm_State* d;
+    char failed;
+
     PyCodeObject* co;
     PyObject* co_consts;
     PyObject* co_names;
@@ -195,6 +197,13 @@ typedef struct Jit {
 #else
 #include <dynasm/dasm_x86.h>
 #endif
+
+#if JIT_DEBUG
+// checks after every instruction sequence emitted if a DynASM error got generated
+// helps with catching operands which are out of range for the specified instruction.
+#define dasm_put(...) do { dasm_put(__VA_ARGS__); JIT_ASSERT(Dst_REF->status == DASM_S_OK, "dasm check failed"); } while (0)
+#endif
+
 
 #include <sys/mman.h>
 #include <ctype.h>
@@ -627,7 +636,7 @@ static int8_t* mem_chunk = NULL;
 static size_t mem_chunk_bytes_remaining = 0;
 static long mem_bytes_allocated = 0, mem_bytes_used = 0;
 static long mem_bytes_used_max = 100*1000*1000; // will stop emitting code after that many bytes
-static int jit_num_funcs = 0;
+static int jit_num_funcs = 0, jit_num_failed = 0;
 
 static int jit_stats_enabled = 0;
 static unsigned long jit_stat_load_attr_hit, jit_stat_load_attr_miss, jit_stat_load_attr_inline, jit_stat_load_attr_total;
@@ -2209,6 +2218,13 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
 
     // set opcode pointer. we do it before checking for signals to make deopt easier
     |.if arch==aarch64
+        if (inst_idx*2 > 32768) {
+            // the mov can't encode this immediate, we would have to use multiple instructions
+            // but because our interrupt and tracing code requires a fixed instruction sequence
+            // we just abort compiling this function
+            Dst->failed = 1;
+            return;
+        }
         // insts are 2*4=8 bytes long
         | mov tmp, #inst_idx*2
         | str Rw(tmp_idx), [f, #offsetof(PyFrameObject, f_lasti)]
@@ -2374,7 +2390,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     switch_section(Dst, SECTION_CODE);
 
     // allocate enough space for emitting a dynamic label for the start of every bytecode
-    dasm_growpc(Dst,  Dst->num_opcodes + 1);
+    dasm_growpc(Dst, Dst->num_opcodes + 1);
 
     jit.is_jmp_target = calculate_jmp_targets(Dst);
 
@@ -2390,7 +2406,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
     // this is used for the special EXTENDED_ARG opcode
     int oldoparg = 0;
-    for (int inst_idx = 0; inst_idx < Dst->num_opcodes; ++inst_idx) {
+    for (int inst_idx = 0; inst_idx < Dst->num_opcodes && !Dst->failed; ++inst_idx) {
         _Py_CODEUNIT word = Dst->first_instr[inst_idx];
         int opcode = _Py_OPCODE(word);
         int oparg = _Py_OPARG(word);
@@ -2412,16 +2428,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 Dst->known_defined[i] = 1; // function arg is defined
             }
         }
-/*
-        fprintf(stderr, "%3d %50s %d\n", inst_idx, get_opcode_name(opcode), oparg);
-        #ifdef DASM_CHECKS
-            int dasm_err = dasm_checkstep(Dst, -1);
-            if (dasm_err) {
-                fprintf(stderr, "dynasm returned error %x", dasm_err);
-                JIT_ASSERT(0, "");
-            }
-        #endif
-*/
+
+        //fprintf(stderr, "%3d %50s %d\n", inst_idx, get_opcode_name(opcode), oparg);
+
         // set jump target for current inst index
         // we can later jump here via =>oparg etc..
         // also used for the opcode_addr table
@@ -2429,6 +2438,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
         // emits f->f_lasti update, signal and trace check
         emit_instr_start(Dst, inst_idx, opcode, oparg);
+        if (Dst->failed)
+            goto failed;
 
         switch(opcode) {
         case NOP:
@@ -3474,13 +3485,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 case END_ASYNC_FOR:
                     // res == 1 means JUMP_BY(oparg) (only other value)
                     // res == 2 means goto exception_unwind
-                    |.if ARCH==aarch64
-                        JIT_ASSERT(0, "");
-                    |.else
                     emit_cmp64_imm(Dst, res_idx, 2);
                     | branch_eq ->exception_unwind
                     emit_jump_by_n_bytecodes(Dst, oparg, inst_idx);
-                    |.endif
                     break;
 
                 // opcodes helper functions which return the result instead of pushing to the value stack
@@ -3766,6 +3773,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     }
 #endif
 
+    if (Dst->failed)
+        goto failed;
+
 #ifdef DASM_CHECKS
     int dasm_err = dasm_checkstep(Dst, -1);
     if (dasm_err) {
@@ -3800,7 +3810,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #endif
         if (mem_chunk == MAP_FAILED) {
             mem_chunk_bytes_remaining = 0;
-            goto cleanup;
+            goto failed;
         }
         mem_chunk = new_chunk;
         //fprintf(stderr, "got addr %p\n", new_chunk);
@@ -3906,10 +3916,15 @@ cleanup:
     }
 
     return success ? labels[lbl_entry] : NULL;
+
+
+failed:
+    ++jit_num_failed;
+    goto cleanup;
 }
 
 void show_jit_stats() {
-    fprintf(stderr, "jit: compiled %d functions\n", jit_num_funcs);
+    fprintf(stderr, "jit: compiled %d functions, couldn't compile %d functions\n", jit_num_funcs, jit_num_failed);
     fprintf(stderr, "jit: %ld bytes used (%.1f%% of allocated)\n", mem_bytes_used, 100.0 * mem_bytes_used / mem_bytes_allocated);
     fprintf(stderr, "jit: inlined %lu (of total %lu) LOAD_ATTR caches: %lu hits %lu misses\n", jit_stat_load_attr_inline, jit_stat_load_attr_total, jit_stat_load_attr_hit, jit_stat_load_attr_miss);
     fprintf(stderr, "jit: inlined %lu (of total %lu) LOAD_METHOD caches: %lu hits %lu misses\n", jit_stat_load_method_inline, jit_stat_load_method_total, jit_stat_load_method_hit, jit_stat_load_method_miss);
