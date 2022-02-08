@@ -2350,6 +2350,9 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
     Dst->emitted_trace_check_for_line = 1;
 }
 
+|.globals lbl_
+|.actionlist bf_actions
+
 #if JIT_DEBUG
 __attribute__((optimize("-O0"))) // enable to make "source tools/dis_jit_gdb.py" work
 #endif
@@ -2382,19 +2385,17 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
     Jit* Dst = &jit;
     dasm_init(Dst, DASM_MAXSECTION);
-    |.globals lbl_
     void* labels[lbl__MAX];
     dasm_setupglobal(Dst, labels, lbl__MAX);
 
-    |.actionlist bf_actions
     dasm_setup(Dst, bf_actions);
+
+    // allocate enough space for emitting a dynamic label for the start of every bytecode
+    dasm_growpc(Dst, Dst->num_opcodes + 1);
 
     // we emit the opcode implementations first and afterwards the entry point of the function because
     // we don't know how much stack it will use etc..
     switch_section(Dst, SECTION_CODE);
-
-    // allocate enough space for emitting a dynamic label for the start of every bytecode
-    dasm_growpc(Dst, Dst->num_opcodes + 1);
 
     jit.is_jmp_target = calculate_jmp_targets(Dst);
 
@@ -3809,15 +3810,21 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #ifdef MAP_32BIT
         void* new_chunk = mmap(0, mem_chunk_bytes_remaining, PROT_READ | PROT_WRITE, MAP_32BIT | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #else
-        // TODO: add workaround for missing 32bit allocs. Either switch to 64 support or use MAP_FIXED..
-        void* new_chunk = mmap(0x4000000 + mem_bytes_allocated, mem_chunk_bytes_remaining, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* new_chunk = 0;
+        char* start_addr = (char*)0x4000000;
+        for (int i=0; i<10; ++i) {
+            new_chunk = mmap(start_addr + mem_bytes_allocated, mem_chunk_bytes_remaining, PROT_READ | PROT_WRITE, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (new_chunk != MAP_FAILED)
+                break;
+            start_addr += 0x10000000;
+        }
 #endif
-        if (mem_chunk == MAP_FAILED) {
+        if (new_chunk == MAP_FAILED || !IS_32BIT_VAL(new_chunk)) {
+            JIT_ASSERT(0, "MAP_FAILED");
             mem_chunk_bytes_remaining = 0;
             goto failed;
         }
         mem_chunk = new_chunk;
-        //fprintf(stderr, "got addr %p\n", new_chunk);
 
         // we self modify (=AOTFuncs) so make it writable to
         mprotect(mem_chunk, mem_chunk_bytes_remaining, PROT_READ | PROT_EXEC | PROT_WRITE);
@@ -3843,7 +3850,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         unsigned int* opcode_addr_begin = (unsigned int*)labels[lbl_opcode_addr_begin];
         int offset = dasm_getpclabel(Dst, inst_idx);
         //fprintf(stderr, "o(%p): %d %p\n", opcode_addr_begin, offset, mem + (unsigned int)offset);
-        opcode_addr_begin[inst_idx] = (unsigned int)mem + (unsigned int)offset;
+        unsigned long addr = (unsigned long)mem + (unsigned long)offset;
+        JIT_ASSERT(IS_32BIT_VAL(addr), "");
+        opcode_addr_begin[inst_idx] = (unsigned int)addr;
     }
 
     if (perf_map_file) {
