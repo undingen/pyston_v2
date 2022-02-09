@@ -837,18 +837,22 @@ static void emit_mov_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.endif
 }
 
+// both bounds are inclusive
+static int is_in_range(long val, long min_val, long max_val) {
+    return val >= min_val && val <= max_val;
+}
+
 static void emit_cmp32_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.if arch==aarch64
 #ifdef __aarch64__
-    if (val <= (unsigned long)4095 && val >= (unsigned long)-4095 /* this will automatically emit cmn */) {
-        | cmp Rw(r_idx), #val
+    if (is_in_range(val, -4095, 4095)) {
+        | cmp Rw(r_idx), #val /* this will automatically emit cmn for negative numbers*/
     } else {
         emit_mov_imm(Dst, tmp_idx, val);
         | cmp Rw(r_idx), Rw(tmp_idx)
     }
 #endif
 |.else
-#ifndef __aarch64__
     if (val == 0) {
         | test Rd(r_idx), Rd(r_idx)
     } else if (IS_32BIT_VAL(val)) {
@@ -856,22 +860,20 @@ static void emit_cmp32_imm(Jit* Dst, int r_idx, unsigned long val) {
     } else {
         JIT_ASSERT(0, "should not reach this");
     }
-#endif
 |.endif
 }
 
 static void emit_cmp64_imm(Jit* Dst, int r_idx, unsigned long val) {
 |.if arch==aarch64
 #ifdef __aarch64__
-    if ((long)val <= 4095 && (long)val >= -4095 /* this will automatically emit cmn */) {
-        | cmp Rx(r_idx), #val
+    if (is_in_range(val, -4095, 4095)) {
+        | cmp Rx(r_idx), #val /* this will automatically emit cmn for negative numbers*/
     } else {
         emit_mov_imm(Dst, tmp_idx, val);
         | cmp Rx(r_idx), tmp
     }
 #endif
 |.else
-#ifndef __aarch64__
     if (val == 0) {
         | test Rq(r_idx), Rq(r_idx)
     } else if (IS_32BIT_VAL(val)) {
@@ -880,17 +882,11 @@ static void emit_cmp64_imm(Jit* Dst, int r_idx, unsigned long val) {
         | mov64 tmp, (unsigned long)val
         | cmp Rq(r_idx), tmp
     }
-#endif
 |.endif
 }
 
-// both bounds are inclusive
-static int is_in_range(long val, long min_val, long max_val) {
-    return val >= min_val && val <= max_val;
-}
-
 // load a 64bit value relative to current SP into register
-static void emit_load32_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
+static void emit_load32_mem(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
 |.if arch==aarch64
 #if __aarch64__
     if (is_in_range(offset_in_bytes, -256, 255) ||
@@ -907,7 +903,7 @@ static void emit_load32_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_i
 }
 
 // load a 64bit value relative to current SP into register
-static void emit_load64_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
+static void emit_load64_mem(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
 |.if arch==aarch64
 #if __aarch64__
     if (is_in_range(offset_in_bytes, -256, 255) ||
@@ -924,7 +920,7 @@ static void emit_load64_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_i
 }
 
 // store a 64bit value from register into SP relative memory location
-static void emit_store64_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
+static void emit_store64_mem(Jit* Dst, int r_dst, int r_mem, long offset_in_bytes) {
 |.if arch==aarch64
     if (is_in_range(offset_in_bytes, -256, 255) ||
         (is_in_range(offset_in_bytes, 0, 32760) && offset_in_bytes % 8 == 0))  {
@@ -938,54 +934,52 @@ static void emit_store64_mem_offset(Jit* Dst, int r_dst, int r_mem, long offset_
 |.endif
 }
 
-
-static void emit_load64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-    emit_load64_mem_offset(Dst, r_dst, sp_reg_idx, offset_in_bytes);
+// moves a 32bit or 64bit immediate into a 64 bit memory location uses smallest encoding
+static void emit_store64_mem_imm(Jit* Dst, unsigned long val, int r_mem, long offset) {
+|.if arch==aarch64
+#ifdef __aarch64__
+    if (val == 0) {
+        emit_store64_mem(Dst, zero_reg_idx, r_mem, offset);
+        return;
+    }
+#endif
+|.else
+#ifndef __aarch64__
+    if (IS_32BIT_VAL(val)) {
+        | mov qword [Rq(r_mem) + offset], (unsigned int)val
+        return;
+    }
+#endif
+|.endif
+    emit_mov_imm(Dst, tmp_idx, val);
+    emit_store64_mem(Dst, tmp_idx, r_mem, offset);
 }
 
-// store a 64bit value from register into SP relative memory location
-static void emit_store64_sp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-    emit_store64_mem_offset(Dst, r_dst, sp_reg_idx, offset_in_bytes);
-}
-
-// load a 64bit value relative to current VSP into register
-static void emit_load64_vsp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-    emit_load64_mem_offset(Dst, r_dst, vsp_idx, offset_in_bytes);
-}
-
-// store a 64bit value from register into VSP relative memory location
-static void emit_store64_vsp_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-    emit_store64_mem_offset(Dst, r_dst, vsp_idx, offset_in_bytes);
-}
-
-// load a 64bit value relative to current python frame into register
-static void emit_load64_f_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-    emit_load64_mem_offset(Dst, r_dst, f_idx, offset_in_bytes);
-}
-
-// store a 64bit value from register into python frame relative memory location
-static void emit_store64_f_offset(Jit* Dst, int r_dst, unsigned long offset_in_bytes) {
-    emit_store64_mem_offset(Dst, r_dst, f_idx, offset_in_bytes);
-}
-
-
-#define FITS_IN_12BIT(x) ((((x)>>12)<<12) == (x))
-#define FITS_IN_12BIT_OR_SHIFT(x) ((((x)>>12)<<12) == (x) || FITS_IN_12BIT(x))
-
-static int fits_in_12bit(long val) {
-    return (val & 0xFFF) == val;
+static void emit_cmp64_mem_imm(Jit* Dst, int r_mem, long offset, unsigned long val) {
+|.if arch~=aarch64
+#ifndef __aarch64__
+    if (IS_32BIT_VAL(val)) {
+        | cmp qword [Rq(r_mem)+offset], (unsigned int)val
+        return
+    }
+#endif
+|.endif
+    emit_load64_mem(Dst, tmp_idx, r_mem, offset);
+    emit_cmp64_imm(Dst, tmp_idx, val);
 }
 
 static int fits_in_12bit_with_12bit_shift(long val) {
-    return (val & 0xFFF) == 0 && fits_in_12bit(val>>12);
+    return (val & 0xFFF) == 0 && is_in_range(val>>12, 0, 4095);
 }
 
 // moves the value stack pointer by num_values python objects
 static void emit_adjust_vs(Jit* Dst, int num_values) {
+    if (num_values == 0)
+        return;
 |.if arch==aarch64
 #ifdef __aarch64__
     int offset_abs = abs(8*num_values);
-    if (fits_in_12bit(offset_abs) || fits_in_12bit_with_12bit_shift(offset_abs)) {
+    if (is_in_range(offset_abs, 0, 4095) || fits_in_12bit_with_12bit_shift(offset_abs)) {
         if (num_values > 0) {
             | add vsp, vsp, #offset_abs
         } else if (num_values < 0) {
@@ -1012,25 +1006,25 @@ static void emit_adjust_vs(Jit* Dst, int num_values) {
 
 static void emit_push_v(Jit* Dst, int r_idx) {
     deferred_vs_apply(Dst);
-    emit_store64_vsp_offset(Dst, r_idx, 0 /*= offset */);
+    emit_store64_mem(Dst, r_idx, vsp_idx, 0 /*= offset */);
     emit_adjust_vs(Dst, 1);
 }
 
 static void emit_pop_v(Jit* Dst, int r_idx) {
     deferred_vs_apply(Dst);
     emit_adjust_vs(Dst, -1);
-    emit_load64_vsp_offset(Dst, r_idx, 0 /*= offset */);
+    emit_load64_mem(Dst, r_idx, vsp_idx, 0 /*= offset */);
 }
 
 // top = 1, second = 2, third = 3,...
 static void emit_read_vs(Jit* Dst, int r_idx, int stack_offset) {
     deferred_vs_apply(Dst);
-    emit_load64_vsp_offset(Dst, r_idx, -8*stack_offset);
+    emit_load64_mem(Dst, r_idx, vsp_idx, -8*stack_offset);
 }
 
 static void emit_write_vs(Jit* Dst, int r_idx, int stack_offset) {
     deferred_vs_apply(Dst);
-    emit_store64_vsp_offset(Dst, r_idx, -8*stack_offset);
+    emit_store64_mem(Dst, r_idx, vsp_idx, -8*stack_offset);
 }
 
 static void emit_dec_qword_ptr(Jit* Dst, void* ptr, int can_use_tmp_reg) {
@@ -1045,7 +1039,7 @@ static void emit_dec_qword_ptr(Jit* Dst, void* ptr, int can_use_tmp_reg) {
         | add qword [ptr], -1
     } else {
         // unfortunately we can't modify any register here :/
-        // which means we will have to safe an restore via the stack
+        // which means we will have to save and restore via the stack
         if (!can_use_tmp_reg) {
             | push tmp
         }
@@ -1090,38 +1084,6 @@ static void emit_incref(Jit* Dst, int r_idx) {
 |.else
     | add qword [Rq(r_idx)], 1
 |.endif
-}
-
-
-// moves a 32bit or 64bit immediate into a 64 bit memory location uses smallest encoding
-static void emit_store64_mem_offset_imm(Jit* Dst, unsigned long val, int r_mem, long offset) {
-|.if arch==aarch64
-#ifdef __aarch64__
-    if (val == 0) {
-        emit_store64_mem_offset(Dst, zero_reg_idx, r_mem, offset);
-        return;
-    }
-#endif
-|.else
-#ifndef __aarch64__
-    if (IS_32BIT_VAL(val)) {
-        | mov qword [Rq(r_mem) + offset], (unsigned int)val
-        return;
-    }
-#endif
-|.endif
-    emit_mov_imm(Dst, tmp_idx, val);
-    emit_store64_mem_offset(Dst, tmp_idx, r_mem, offset);
-}
-
-static void emit_store64_vsp_offset_imm(Jit* Dst, long offset, unsigned long val) {
-    return emit_store64_mem_offset_imm(Dst, val, vsp_idx, offset);
-}
-static void emit_store64_sp_offset_imm(Jit* Dst, long offset, unsigned long val) {
-    return emit_store64_mem_offset_imm(Dst, val, sp_reg_idx, offset);
-}
-static void emit_store64_f_offset_imm(Jit* Dst, long offset, unsigned long val) {
-    return emit_store64_mem_offset_imm(Dst, val, f_idx, offset);
 }
 
 // Loads a register `r_idx` with a value `addr`, potentially doing a lea
@@ -1258,7 +1220,7 @@ static void emit_decref(Jit* Dst, int r_idx, int preserve_res) {
 #endif
     |.if arch==aarch64
         | ldr tmp, [Rx(r_idx)]
-        | sub tmp, tmp, #1
+        | subs tmp, tmp, #1    // must use instruction which sets the flags!
         | str tmp, [Rx(r_idx)]
     |.else
         | add qword [Rq(r_idx)], -1
@@ -1267,28 +1229,19 @@ static void emit_decref(Jit* Dst, int r_idx, int preserve_res) {
     // we have to instead emit it inline
     int use_inline_decref = Dst->current_section == SECTION_COLD;
     if (use_inline_decref) {
-        |.if arch==aarch64
-            | cbnz tmp, >8 // can only jump 128 byte
-        |.else
-            | jnz >8
-        |.endif
+        | branch_ne >8 // this is same as 'branch if not zero'
     } else {
-        |.if arch==aarch64
-            | cmp tmp, #0
-            | beq >8
-        |.else
-            | jz >8
-        |.endif
+        | branch_eq >8 // this is same as 'branch if zero'
         switch_section(Dst, SECTION_COLD);
         |8:
     }
 
-    int already_saved = 0;
     if (r_idx != arg1_idx) // setup the call argument
         emit_mov64_reg(Dst, arg1_idx, r_idx);
 
-    if (preserve_res && !already_saved)
-        emit_mov64_reg(Dst, tmp_preserved_reg_idx, res_idx); // save the result
+    if (preserve_res) {
+        | mov tmp_preserved_reg, res // save the result
+    }
 
     // inline _Py_Dealloc
     //  call_ext_func _Py_Dealloc
@@ -1296,13 +1249,16 @@ static void emit_decref(Jit* Dst, int r_idx, int preserve_res) {
         | ldr tmp, [arg1, #offsetof(PyObject, ob_type)]
         | ldr tmp, [tmp, #offsetof(PyTypeObject, tp_dealloc)]
         | blr tmp
+        // we don't need this here because because the function returns void
+        // mov res, real_res
     |.else
         | mov res, [arg1 + offsetof(PyObject, ob_type)]
         | call qword [res + offsetof(PyTypeObject, tp_dealloc)]
     |.endif
 
-    if (preserve_res)
-        emit_mov64_reg(Dst, res_idx, tmp_preserved_reg_idx);
+    if (preserve_res) {
+        | mov res, tmp_preserved_reg
+    }
 
     if (use_inline_decref) {
         |8:
@@ -1331,7 +1287,7 @@ static void emit_decref2(Jit* Dst, int r_idx, int r_idx2, int preserve_res) {
         emit_mov64_reg(Dst, vs_preserved_reg_idx, r_idx2);
         LocationOfVar2 = VS_REG;
     } else { // have to use the stack
-        emit_store64_sp_offset(Dst, r_idx2, 0 /* stack slot */);
+        emit_store64_mem(Dst, r_idx2, sp_reg_idx, 0 /* stack slot */);
         LocationOfVar2 = STACK_SLOT;
     }
     emit_decref(Dst, r_idx, preserve_res);
@@ -1341,7 +1297,7 @@ static void emit_decref2(Jit* Dst, int r_idx, int r_idx2, int preserve_res) {
         emit_decref(Dst, vs_preserved_reg_idx, preserve_res);
         emit_mov_imm(Dst, vs_preserved_reg_idx, 0); // we have to clear it because error path will xdecref
     } else {
-        emit_load64_sp_offset(Dst, arg1_idx, 0 /* stack slot */);
+        emit_load64_mem(Dst, arg1_idx, sp_reg_idx, 0 /* stack slot */);
         emit_decref(Dst, arg1_idx, preserve_res);
     }
 }
@@ -1383,7 +1339,7 @@ static void emit_call_decref_args(Jit* Dst, void* func, int num, int regs[], Ref
             int stack_slot = num_owned - can_use_vs_preserved_reg -1;
             // this should never happen if it does adjust NUM_MANUAL_STACK_SLOTS
             JIT_ASSERT(stack_slot < NUM_MANUAL_STACK_SLOTS, "");
-            emit_store64_sp_offset(Dst, regs[i], stack_slot*8);
+            emit_store64_mem(Dst, regs[i], sp_reg_idx, stack_slot*8);
         }
         ++num_owned;
     }
@@ -1402,7 +1358,7 @@ static void emit_call_decref_args(Jit* Dst, void* func, int num, int regs[], Ref
             int stack_slot = num_decref - can_use_vs_preserved_reg -1;
             // this should never happen if it does adjust NUM_MANUAL_STACK_SLOTS
             JIT_ASSERT(stack_slot < NUM_MANUAL_STACK_SLOTS, "");
-            emit_load64_sp_offset(Dst, arg1_idx, stack_slot*8);
+            emit_load64_mem(Dst, arg1_idx, sp_reg_idx, stack_slot*8);
             emit_decref(Dst, arg1_idx, 1); /*= preserve res */
         }
         ++num_decref;
@@ -1455,7 +1411,7 @@ static void debug_error_not_a_jump_target(PyFrameObject* f) {
 
 // warning this will overwrite tmp, arg1 and arg2
 static void emit_jmp_to_lasti(Jit* Dst) {
-    emit_load32_mem_offset(Dst, arg1_idx, f_idx, offsetof(PyFrameObject, f_lasti));
+    emit_load32_mem(Dst, arg1_idx, f_idx, offsetof(PyFrameObject, f_lasti));
 
 #if JIT_DEBUG
     // generate code to check that the instruction we jump to had 'is_jmp_target' set
@@ -1487,7 +1443,54 @@ static int get_fastlocal_offset(int fastlocal_idx) {
 // this does the same as: r = freevars[num]
 static void emit_load_freevar(Jit* Dst, int r_idx, int num) {
     // PyObject *cell = (f->f_localsplus + co->co_nlocals)[oparg];
-    emit_load64_f_offset(Dst, r_idx, get_fastlocal_offset(Dst->co->co_nlocals + num));
+    emit_load64_mem(Dst, r_idx, f_idx, get_fastlocal_offset(Dst->co->co_nlocals + num));
+}
+
+
+// compares ceval->tracing_possible == 0 and eval_breaker == 0 in one (64bit)
+// Always emits instructions using name number of bytes.
+static void emit_tracing_possible_and_eval_breaker_check(Jit* Dst) {
+    |.if arch==aarch64
+        // insts are 2*4=8 bytes long
+        | ldr Rx(tmp_idx), [interrupt]
+        | cmp Rx(tmp_idx), xzr
+    |.else
+        | cmp qword [interrupt], 0 // inst is 4 bytes long
+    |.endif
+}
+
+// compares ceval->tracing_possible == 0 (32bit)
+// Always emits instructions using name number of bytes.
+static void emit_tracing_possible_check(Jit* Dst) {
+    |.if arch==aarch64
+        // insts are 2*4=8 bytes long
+        | ldr Rw(tmp_idx), [interrupt]
+        | cmp Rw(tmp_idx), wzr
+    |.else
+        | cmp dword [interrupt], 0 // inst is 3 bytes long
+    |.endif
+}
+
+// emits 'd->f_lasti = val'.
+// Always emits instructions using name number of bytes.
+static void emit_update_f_lasti(Jit* Dst, long val) {
+    |.if arch==aarch64
+        #if __aarch64__
+            if (val >= 32768) {
+                // the mov can't encode this immediate, we would have to use multiple instructions
+                // but because our interrupt and tracing code requires a fixed instruction sequence
+                // we just abort compiling this function
+                Dst->failed = 1;
+                return;
+            }
+        #endif
+        // insts are 2*4=8 bytes long
+        | mov tmp, #val
+        | str Rw(tmp_idx), [f, #offsetof(PyFrameObject, f_lasti)]
+    |.else
+        // inst is 8 bytes long
+        | mov dword [f + offsetof(PyFrameObject, f_lasti)], val
+    |.endif
 }
 
 //////////////////////////////////////////////////////////////
@@ -1499,25 +1502,25 @@ static void deferred_vs_emit(Jit* Dst) {
             if (entry->loc == CONST) {
                 PyObject* obj = PyTuple_GET_ITEM(Dst->co_consts, entry->val);
                 if (IS_IMMORTAL(obj)) {
-                    emit_store64_vsp_offset_imm(Dst, 8 * (i-1), (unsigned long)obj);
+                    emit_store64_mem_imm(Dst, (unsigned long)obj, vsp_idx, 8 * (i-1));
                 } else {
                     emit_mov_imm(Dst, tmp_idx, (unsigned long)obj);
                     emit_incref(Dst, tmp_idx);
-                    emit_store64_vsp_offset(Dst, tmp_idx, 8 * (i-1));
+                    emit_store64_mem(Dst, tmp_idx, vsp_idx, 8 * (i-1));
                 }
             } else if (entry->loc == FAST) {
-                emit_load64_f_offset(Dst, tmp_idx, get_fastlocal_offset(entry->val));
+                emit_load64_mem(Dst, tmp_idx, f_idx, get_fastlocal_offset(entry->val));
                 emit_incref(Dst, tmp_idx);
-                emit_store64_vsp_offset(Dst, tmp_idx, 8 * (i-1));
+                emit_store64_mem(Dst, tmp_idx, vsp_idx, 8 * (i-1));
             } else if (entry->loc == REGISTER) {
-                emit_store64_vsp_offset(Dst, entry->val, 8 * (i-1));
+                emit_store64_mem(Dst, entry->val, vsp_idx, 8 * (i-1));
                 if (entry->val == vs_preserved_reg_idx) {
                     emit_mov_imm(Dst, vs_preserved_reg_idx, 0); // we have to clear it because error path will xdecref
                 }
             } else if (entry->loc == STACK) {
-                emit_load64_sp_offset(Dst, tmp_idx, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8);
-                emit_store64_sp_offset_imm(Dst, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8, 0 /* = value */);
-                emit_store64_vsp_offset(Dst, tmp_idx, 8 * (i-1));
+                emit_load64_mem(Dst, tmp_idx, sp_reg_idx, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8);
+                emit_store64_mem_imm(Dst, 0 /* = value */, sp_reg_idx, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8);
+                emit_store64_mem(Dst, tmp_idx, vsp_idx, 8 * (i-1));
             } else {
                 JIT_ASSERT(0, "entry->loc not implemented");
             }
@@ -1595,7 +1598,7 @@ static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
             emit_mov_imm(Dst, r_idx, (unsigned long)obj);
             ref_status = IS_IMMORTAL(obj) ? IMMORTAL : BORROWED;
         } else if (entry->loc == FAST) {
-            emit_load64_f_offset(Dst, r_idx, get_fastlocal_offset(entry->val));
+            emit_load64_mem(Dst, r_idx, f_idx, get_fastlocal_offset(entry->val));
             ref_status = BORROWED;
         } else if (entry->loc == REGISTER) {
             // only generate mov if src and dst is different
@@ -1604,13 +1607,13 @@ static RefStatus deferred_vs_peek(Jit* Dst, int r_idx, int num) {
             }
             ref_status = OWNED;
         } else if (entry->loc == STACK) {
-            emit_load64_sp_offset(Dst, r_idx, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8);
+            emit_load64_mem(Dst, r_idx, sp_reg_idx, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8);
             ref_status = OWNED;
         } else {
             JIT_ASSERT(0, "entry->loc not implemented");
         }
     } else {
-        emit_load64_vsp_offset(Dst, r_idx, -8*(num-Dst->deferred_vs_next));
+        emit_load64_mem(Dst, r_idx, vsp_idx, -8*(num-Dst->deferred_vs_next));
         ref_status = OWNED;
     }
     return ref_status;
@@ -1647,7 +1650,7 @@ static void deferred_vs_convert_reg_to_stack(Jit* Dst) {
             // have to use a stack slot
             if (Dst->num_deferred_stack_slots <= Dst->deferred_stack_slot_next)
                 ++Dst->num_deferred_stack_slots;
-            emit_store64_sp_offset(Dst, res_idx, (Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8);
+            emit_store64_mem(Dst, res_idx, sp_reg_idx, (Dst->deferred_stack_slot_next + NUM_MANUAL_STACK_SLOTS) * 8);
             entry->loc = STACK;
             entry->val = Dst->deferred_stack_slot_next;
             ++Dst->deferred_stack_slot_next;
@@ -1668,7 +1671,7 @@ static void deferred_vs_remove(Jit* Dst, int num_to_remove) {
     for (int i=0; i < num_to_remove && Dst->deferred_vs_next > i; ++i) {
         DeferredValueStackEntry* entry = &GET_DEFERRED[-i-1];
         if (entry->loc == STACK) {
-            emit_store64_sp_offset_imm(Dst, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8, 0/*= value */);
+            emit_store64_mem_imm(Dst, 0 /*= value */, sp_reg_idx, (entry->val + NUM_MANUAL_STACK_SLOTS) * 8);
             if (Dst->deferred_stack_slot_next-1 == entry->val)
                 --Dst->deferred_stack_slot_next;
         } else if (entry->loc == REGISTER) {
@@ -2217,20 +2220,10 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
     // WARNING: if you adjust anything here check if you have to adjust jmp_to_inst_idx
 
     // set opcode pointer. we do it before checking for signals to make deopt easier
-    |.if arch==aarch64
-        if (inst_idx*2 > 32768) {
-            // the mov can't encode this immediate, we would have to use multiple instructions
-            // but because our interrupt and tracing code requires a fixed instruction sequence
-            // we just abort compiling this function
-            Dst->failed = 1;
-            return;
-        }
-        // insts are 2*4=8 bytes long
-        | mov tmp, #inst_idx*2
-        | str Rw(tmp_idx), [f, #offsetof(PyFrameObject, f_lasti)]
-    |.else
-        | mov dword [f + offsetof(PyFrameObject, f_lasti)], inst_idx*2 // inst is 8 bytes long
-    |.endif
+    emit_update_f_lasti(Dst, inst_idx*2);
+    if (Dst->failed)
+        return;
+
     // if the current opcode has an EXTENDED_ARG prefix (or more of them - not sure if possible but we handle it here)
     // we need to modify f_lasti in case of deopt.
     // Otherwise the interpreter would skip the EXTENDED_ARG opcodes and would end up generating a completely
@@ -2251,13 +2244,7 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
     case BEFORE_ASYNC_WITH:
     case YIELD_FROM:
         // compares ceval->tracing_possible == 0 (32bit)
-        |.if arch==aarch64
-            // insts are 2*4=8 bytes long
-            | ldr Rw(tmp_idx), [interrupt]
-            | cmp Rw(tmp_idx), wzr
-        |.else
-            | cmp dword [interrupt], 0 // inst is 3 bytes long
-        |.endif
+        emit_tracing_possible_check(Dst);
 
         // if we deferred stack operations we have to emit a special deopt path
         if (Dst->deferred_vs_next || num_extended_arg) {
@@ -2268,12 +2255,7 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
 
             // adjust f_lasti to point to the first EXTENDED_ARG
             if (num_extended_arg) {
-                |.if arch==aarch64
-                    | mov tmp, #(inst_idx-num_extended_arg) *2
-                    | str Rw(tmp_idx), [f, #offsetof(PyFrameObject, f_lasti)]
-                |.else
-                    | mov dword [f + offsetof(PyFrameObject, f_lasti)], (inst_idx-num_extended_arg) *2
-                |.endif
+                emit_update_f_lasti(Dst, (inst_idx-num_extended_arg) *2);
             }
             if (!Dst->emitted_trace_check_for_line) {
                 | branch ->deopt_return_new_line
@@ -2295,14 +2277,7 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
         _Static_assert(offsetof(struct _ceval_runtime_state, tracing_possible) == 4, "cmp need to be modified");
         _Static_assert(offsetof(struct _ceval_runtime_state, eval_breaker) == 8, "cmp need to be modified");
         // compares ceval->tracing_possible == 0 and eval_breaker == 0 in one (64bit)
-
-        |.if arch==aarch64
-            // insts are 2*4=8 bytes long
-            | ldr Rx(tmp_idx), [interrupt]
-            | cmp Rx(tmp_idx), xzr
-        |.else
-            | cmp qword [interrupt], 0 // inst is 4 bytes long
-        |.endif
+        emit_tracing_possible_and_eval_breaker_check(Dst);
 
         // if we deferred stack operations we have to emit a special deopt path
         if (Dst->deferred_vs_next || num_extended_arg) {
@@ -2310,11 +2285,7 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
             switch_section(Dst, SECTION_COLD);
             |1:
             // compares ceval->tracing_possible == 0 (32bit)
-            |.if arch==aarch64
-                | cmp Rw(tmp_idx), wzr
-            |.else
-                | cmp dword [interrupt], 0
-            |.endif
+            emit_tracing_possible_check(Dst);
             if (Dst->deferred_vs_res_used) {
                 | branch_eq ->handle_signal_res_in_use
             } else {
@@ -2324,12 +2295,7 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
 
             // adjust f_lasti to point to the first EXTENDED_ARG
             if (num_extended_arg) {
-                |.if arch==aarch64
-                    | mov tmp, #(inst_idx-num_extended_arg) *2
-                    | str Rw(tmp_idx), [f, #offsetof(PyFrameObject, f_lasti)]
-                |.else
-                    | mov dword [f + offsetof(PyFrameObject, f_lasti)], (inst_idx-num_extended_arg) *2
-                |.endif
+                emit_update_f_lasti(Dst, (inst_idx-num_extended_arg) *2);
             }
             if (!Dst->emitted_trace_check_for_line) {
                 | branch ->deopt_return_new_line
@@ -2466,12 +2432,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
         case LOAD_FAST:
             if (!Dst->known_defined[oparg] /* can be null */) {
-                |.if ARCH==aarch64
-                    emit_load64_f_offset(Dst, tmp_idx, get_fastlocal_offset(oparg));
-                    | cmp tmp, #0
-                |.else
-                    | cmp qword [f + get_fastlocal_offset(oparg)], 0
-                |.endif
+                emit_cmp64_mem_imm(Dst, f_idx, get_fastlocal_offset(oparg), 0 /* = value */);
                 | branch_eq >1
                 switch_section(Dst, SECTION_COLD);
                 |1:
@@ -2492,8 +2453,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case STORE_FAST:
             deferred_vs_pop1_owned(Dst, arg2_idx);
             deferred_vs_apply_if_same_var(Dst, oparg);
-            emit_load64_f_offset(Dst, arg1_idx, get_fastlocal_offset(oparg));
-            emit_store64_f_offset(Dst, arg2_idx, get_fastlocal_offset(oparg));
+            emit_load64_mem(Dst, arg1_idx, f_idx, get_fastlocal_offset(oparg));
+            emit_store64_mem(Dst, arg2_idx, f_idx, get_fastlocal_offset(oparg));
             if (Dst->known_defined[oparg]) {
                 emit_decref(Dst, arg1_idx, 0 /* don't preserve res */);
             } else {
@@ -2506,7 +2467,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case DELETE_FAST:
         {
             deferred_vs_apply_if_same_var(Dst, oparg);
-            emit_load64_f_offset(Dst, arg2_idx, get_fastlocal_offset(oparg));
+            emit_load64_mem(Dst, arg2_idx, f_idx, get_fastlocal_offset(oparg));
             if (!Dst->known_defined[oparg] /* can be null */) {
                 emit_cmp64_imm(Dst, arg2_idx, 0);
                 | branch_eq >1
@@ -2517,7 +2478,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 | branch ->unboundlocal_error // arg1 must be oparg!
                 switch_section(Dst, SECTION_CODE);
             }
-            emit_store64_f_offset_imm(Dst, get_fastlocal_offset(oparg), 0 /*= value */);
+            emit_store64_mem_imm(Dst, 0 /*= value */, f_idx, get_fastlocal_offset(oparg));
             emit_decref(Dst, arg2_idx, 0 /*= don't preserve res */);
             Dst->known_defined[oparg] = 0;
             break;
@@ -2892,9 +2853,10 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 num_vs_args += 1;
 
                 |.if ARCH==aarch64
-                    emit_load64_vsp_offset(Dst, tmp_idx, -8*num_vs_args);
-                    | cmp tmp, #0
+                #if __aarch64__
+                    emit_cmp64_mem_imm(Dst, vsp_idx, -8*num_vs_args, 0 /* = value */);
                     | cinc arg3, arg3, ne
+                #endif
                 |.else
                     // this is taken from clang:
                     // meth = PEEK(oparg + 2);
@@ -3126,7 +3088,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         {
             RefStatus ref_status = deferred_vs_pop1(Dst, arg3_idx);
             deferred_vs_convert_reg_to_stack(Dst);
-            emit_load64_f_offset(Dst, arg1_idx, offsetof(PyFrameObject, f_globals));
+            emit_load64_mem(Dst, arg1_idx, f_idx, offsetof(PyFrameObject, f_globals));
             emit_mov_imm(Dst, arg2_idx, (unsigned long)PyTuple_GET_ITEM(Dst->co_names, oparg));
             emit_call_decref_args1(Dst, PyDict_SetItem, arg3_idx, &ref_status);
             emit_if_res_32b_not_0_error(Dst);
@@ -3174,15 +3136,15 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 // PyTupleObject stores the elements directly inside the object
                 // while PyListObject has ob_item which points to an array of elements to support resizing.
                 if (opcode == BUILD_LIST) {
-                    emit_load64_mem_offset(Dst, arg2_idx, res_idx, offsetof(PyListObject, ob_item));
+                    emit_load64_mem(Dst, arg2_idx, res_idx, offsetof(PyListObject, ob_item));
                 }
                 int i = oparg;
                 while (--i >= 0) {
                     deferred_vs_peek_owned(Dst, arg1_idx, (oparg - i));
                     if (opcode == BUILD_LIST) {
-                        emit_store64_mem_offset(Dst, arg1_idx, arg2_idx, 8*i);
+                        emit_store64_mem(Dst, arg1_idx, arg2_idx, 8*i);
                     } else {
-                        emit_store64_mem_offset(Dst, arg1_idx, res_idx, offsetof(PyTupleObject, ob_item) + 8*i);
+                        emit_store64_mem(Dst, arg1_idx, res_idx, offsetof(PyTupleObject, ob_item) + 8*i);
                     }
                 }
                 deferred_vs_remove(Dst, oparg);
@@ -3204,9 +3166,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             // PyObject *cell = freevars[oparg];
             emit_load_freevar(Dst, arg3_idx, oparg);
             // PyObject *oldobj = PyCell_GET(cell);
-            emit_load64_mem_offset(Dst, arg1_idx, arg3_idx, offsetof(PyCellObject, ob_ref));
+            emit_load64_mem(Dst, arg1_idx, arg3_idx, offsetof(PyCellObject, ob_ref));
             // PyCell_SET(cell, v);
-            emit_store64_mem_offset(Dst, arg2_idx, arg3_idx, offsetof(PyCellObject, ob_ref));
+            emit_store64_mem(Dst, arg2_idx, arg3_idx, offsetof(PyCellObject, ob_ref));
             emit_xdecref_arg1(Dst);
             break;
 
@@ -3216,7 +3178,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             // PyObject *cell = freevars[oparg];
             emit_load_freevar(Dst, arg1_idx, oparg);
             // PyObject *value = PyCell_GET(cell);
-            emit_load64_mem_offset(Dst, res_idx, arg1_idx, offsetof(PyCellObject, ob_ref));
+            emit_load64_mem(Dst, res_idx, arg1_idx, offsetof(PyCellObject, ob_ref));
             emit_cmp64_imm(Dst, res_idx, 0);
             | branch_eq >1
 
@@ -3240,7 +3202,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 emit_incref(Dst, res_idx);
                 deferred_vs_push(Dst, REGISTER, res_idx);
             } else { // DELETE_DEREF
-                emit_store64_mem_offset_imm(Dst, 0, arg1_idx, offsetof(PyCellObject, ob_ref));
+                emit_store64_mem_imm(Dst, 0, arg1_idx, offsetof(PyCellObject, ob_ref));
                 emit_decref(Dst, res_idx, 0 /*= don't preserve res */);
             }
             break;
@@ -3660,7 +3622,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     | mov arg1, vs_preserved_reg
     emit_xdecref_arg1(Dst);
     for (int i=0; i<Dst->num_deferred_stack_slots; ++i) {
-        emit_load64_sp_offset(Dst, arg1_idx, (NUM_MANUAL_STACK_SLOTS + i) * 8);
+        emit_load64_mem(Dst, arg1_idx, sp_reg_idx, (NUM_MANUAL_STACK_SLOTS + i) * 8);
         emit_xdecref_arg1(Dst);
     }
 
@@ -3751,7 +3713,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // we clear it so in case of error we can just decref this space
     emit_mov_imm(Dst, vs_preserved_reg_idx, 0);
     for (int i=0; i<Dst->num_deferred_stack_slots; ++i) {
-        emit_store64_sp_offset_imm(Dst, (NUM_MANUAL_STACK_SLOTS + i) * 8, 0 /* =value */);
+        emit_store64_mem_imm(Dst, 0 /* =value */, sp_reg_idx, (NUM_MANUAL_STACK_SLOTS + i) * 8);
     }
 
     // jumps either to first opcode implementation or resumes a generator
