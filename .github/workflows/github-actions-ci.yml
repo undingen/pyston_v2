@@ -51,7 +51,7 @@ jobs:
           name: core-dump-${{ matrix.build }}
           path: /cores/
           if-no-files-found: ignore
-  unopt_build:
+  unopt_build-amd64:
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
@@ -67,6 +67,50 @@ jobs:
           echo "/cores/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
 
           docker build -t ubuntu_nonroot .github/workflows/
+          docker run -iv${PWD}:/pyston_dir -iv/cores:/cores --name pyston_build ubuntu_nonroot /pyston_dir/.github/workflows/unopt_build.sh
+
+      # core dump handling steps in case of failure
+      - name: Core dump - add conda build directory
+        if: ${{ failure() }}
+        run: |
+          # if we find a core dump copy in conda build directory as archive
+          if [ "$(ls -A /cores)" ]; then
+            docker cp pyston_build:/pyston_dir /tmp/pyston_dir
+            tar -C /tmp/ -czf /cores/pyston_dir.tar.gz pyston_dir/
+          fi
+          sudo chmod -R +rwx /cores
+          sudo chown -R $USER:$USER /cores
+      - name: Core dump - upload
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v2
+        with:
+          name: core-dump-unopt_build
+          path: /cores/
+          if-no-files-found: ignore
+
+  unopt_build-arm64:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: checkout submodules
+        run: |
+          git submodule update --init pyston/LuaJIT pyston/macrobenchmarks
+      - name: Set up QEMU
+        id: qemu
+        uses: docker/setup-qemu-action@v1
+        with:
+          image: tonistiigi/binfmt:latest
+          platforms: all
+      - name: build pyston and test
+        run: |
+          # enable core dumps
+          ulimit -c unlimited
+          sudo mkdir -p /cores
+          sudo chmod a+rwx /cores
+          echo "/cores/corefile-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
+
+          docker buildx build -t ubuntu_nonroot --platform linux/amd64 .github/workflows/
+
           docker run -iv${PWD}:/pyston_dir -iv/cores:/cores --name pyston_build ubuntu_nonroot /pyston_dir/.github/workflows/unopt_build.sh
 
       # core dump handling steps in case of failure
