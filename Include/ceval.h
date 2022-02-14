@@ -100,7 +100,7 @@ PyAPI_DATA(int) _Py_CheckRecursionLimit;
 static inline void* _stack_pointer(void) {
     void* stackpointer;
 #ifdef __x86_64__
-    __asm( "mov %%rsp, %0" : "=rm" ( stackpointer ));
+    __asm( "mov %%rsp, %0" : "=r" ( stackpointer ));
 #elif defined(__aarch64__)
     __asm( "mov %0, sp" : "=r" ( stackpointer ));
 #else
