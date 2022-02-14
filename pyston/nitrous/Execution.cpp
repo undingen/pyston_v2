@@ -1210,7 +1210,7 @@ void Interpreter::visitCallSite(CallSite CS) {
 
   if (CS.isInlineAsm()) {
       InlineAsm *asm_op = cast<InlineAsm>(CS.getCalledValue());
-      if (asm_op->getAsmString() == "mov %rsp, $0") {
+      if (asm_op->getAsmString() == "mov %rsp, $0" || asm_op->getAsmString() == "mov $0, sp") {
           // We use rsp to see if the C stack has overflowed.
           // So to avoid those exceptions, just return the max value here, since
           // that's the smallest possible stack
