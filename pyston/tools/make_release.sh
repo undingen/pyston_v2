@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$RELEASES" ]; then
-    RELEASES="18.04 20.04"
+    RELEASES="18.04 20.04 22.04"
 
     if [ -d $OUTPUT_DIR ]
     then
