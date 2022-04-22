@@ -314,14 +314,14 @@ PyDict_Fini(void)
 
 /* static */ void free_keys_object(PyDictKeysObject *keys);
 
-/* static */ inline void
+/* static */ extern inline void
 dictkeys_incref(PyDictKeysObject *dk)
 {
     _Py_INC_REFTOTAL;
     dk->dk_refcnt++;
 }
 
-/* static */ inline void
+/* static */ extern inline void
 dictkeys_decref(PyDictKeysObject *dk)
 {
     assert(dk->dk_refcnt > 0);
@@ -332,7 +332,7 @@ dictkeys_decref(PyDictKeysObject *dk)
 }
 
 /* lookup indices.  returns DKIX_EMPTY, DKIX_DUMMY, or ix >=0 */
-/* static */ inline Py_ssize_t
+/* static */ extern inline Py_ssize_t
 dictkeys_get_index(PyDictKeysObject *keys, Py_ssize_t i)
 {
     Py_ssize_t s = DK_SIZE(keys);
@@ -361,7 +361,7 @@ dictkeys_get_index(PyDictKeysObject *keys, Py_ssize_t i)
 }
 
 /* write to indices. */
-/* static */ inline void
+/* static */ extern inline void
 dictkeys_set_index(PyDictKeysObject *keys, Py_ssize_t i, Py_ssize_t ix)
 {
     Py_ssize_t s = DK_SIZE(keys);
