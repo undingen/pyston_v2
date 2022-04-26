@@ -220,11 +220,6 @@ if __name__ == "__main__":
         for item in items:
             f.write("#define %s_%s %d\n" % (prefix, item, item))
 
-    def dump_gotos(d, prefix):
-        for i, item in enumerate(sorted(d)):
-            assert i == item
-            yield f"    &&{prefix}_{item},\n"
-
     with open("sre_constants.h", "w") as f:
         f.write("""\
 /*
@@ -281,7 +276,9 @@ if __name__ == "__main__":
 """)
         content = []
         content.append(f"static void *sre_targets[{len(OPCODES)}] = {{\n")
-        content.extend(dump_gotos(OPCODES, "TARGET_SRE_OP"))
+        for i, item in enumerate(sorted(OPCODES)):
+            assert i == item
+            content.append(f"    &&TARGET_SRE_OP_{item},\n")
         content.append("};\n")
 
         f.write(''.join(content))
