@@ -46,6 +46,11 @@ extern "C" {
     if (ret_addr[-2] == 0xff && ret_addr[-1] == 0xd0) { /* abs call: call rax */\
         unsigned long* call_imm = (unsigned long*)&ret_addr[-2-8];\
         *call_imm = (unsigned long)dst_addr;\
+    } else if (ret_addr[-6] == 0xff && ret_addr[-5] == 0x15) { /* rip rel indirect call */\
+        int* call_imm = (int*)&ret_addr[-4];\
+        unsigned long* jmp_table_entry = (unsigned long*)(ret_addr + *call_imm);\
+        /*fprintf(stderr, "entry %p %d %d %p\n", ret_addr, *call_imm, -*call_imm, jmp_table_entry);*/\
+        *jmp_table_entry = (unsigned long)(dst_addr);\
     } else { /* relative call */ \
         /* 5 byte call instruction - get address of relative immediate operand of call */\
         unsigned int* call_imm = (unsigned int*)&ret_addr[-4];\

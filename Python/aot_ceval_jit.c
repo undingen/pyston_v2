@@ -139,6 +139,7 @@ typedef enum Section {
     SECTION_COLD,
     SECTION_DEOPT,
     SECTION_ENTRY,
+    SECTION_JMP_TABLE,
     SECTION_OPCODE_ADDR,
 } Section;
 
@@ -217,6 +218,8 @@ typedef struct Jit {
     int emitted_trace_check_for_line;
 
     CallMethodHint* call_method_hints; // linked list, each item needs to be freed
+
+    int num_jmp_table_entries;
 } Jit;
 
 #define Dst_DECL Jit* Dst
@@ -271,7 +274,7 @@ struct PerfMapEntry {
     long func_size;
 } *perf_map_funcs;
 
-static int jit_use_aot = 1, jit_use_ics = 1;
+static int jit_use_aot = 1, jit_use_ics = 1, jit_rwx = 0;
 
 static PyObject* cmp_outcomePyCmp_BAD(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_BAD, v, w);
@@ -753,7 +756,7 @@ static unsigned long jit_stat_binary_op_refcnt1, jit_stat_binary_op_refcnt1_miss
 @X86|.arch x64
 
 // section layout is same as specified here from left to right
-|.section entry, code, cold, deopt, opcode_addr
+|.section jump_table, entry, code, cold, deopt, opcode_addr
 
 ////////////////////////////////
 // REGISTER DEFINITIONS
@@ -852,6 +855,8 @@ static void switch_section(Jit* Dst, Section new_section) {
         |.deopt
     } else if (new_section == SECTION_ENTRY) {
         |.entry
+    } else if (new_section == SECTION_JMP_TABLE) {
+        |.jump_table
     } else if (new_section == SECTION_OPCODE_ADDR) {
         |.opcode_addr
     } else {
@@ -1347,6 +1352,19 @@ static void emit_jg_to_bytecode_n(Jit* Dst, int num_bytes) {
 }
 
 static void emit_call_ext_func(Jit* Dst, void* addr) {
+    if (!jit_rwx) {
+        int old_section = Dst->current_section;
+        switch_section(Dst, SECTION_JMP_TABLE);
+        |9:
+        |.aword (unsigned long)addr
+        switch_section(Dst, old_section);
+        // call QWORD PTR [rip+offset_32bit]
+        // encodes as: 0xff 0x15 <offset_32bit>
+@X86    | call qword [<9]
+        ++Dst->num_jmp_table_entries;
+        return;
+    }
+
 @ARM_START
     // WARNING: if you modify this you have to adopt SET_JIT_AOT_FUNC because this call can be patched.
     if (can_use_relative_call(addr)) {
@@ -4544,6 +4562,16 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     }
 #endif
 
+    if (Dst->num_jmp_table_entries) {
+        switch_section(Dst, SECTION_JMP_TABLE);
+        //fprintf(stderr, "n %d %d\n", Dst->num_jmp_table_entries, 4096 - (Dst->num_jmp_table_entries % (4096/8)*8));
+        /*
+        for (int i=0; i<4096 - (Dst->num_jmp_table_entries % (4096/8)*8); ++i) {
+            |.qword 0
+        }*/
+        |.space 4096 - (Dst->num_jmp_table_entries % (4096/8)*8)
+    }
+
     if (Dst->failed)
         goto failed;
 
@@ -4563,20 +4591,34 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         goto failed;
     }
 
-    // Align code regions to cache line boundaries.
-    // I don't know concretely that this is important but seems like
-    // something maybe you're supposed to do?
-    size = (size + 15) / 16 * 16;
+    if (jit_rwx) {
+        // Align code regions to cache line boundaries.
+        // I don't know concretely that this is important but seems like
+        // something maybe you're supposed to do?
+        size = (size + 15) / 16 * 16;
+    } else {
+        // Align to next page
+        size = (size + 4095) / 4096 * 4096;
+    }
 
     // Allocate jitted code regions in 256KB chunks:
     if (size > mem_chunk_bytes_remaining) {
         mem_chunk_bytes_remaining = size > (1<<18) ? size : (1<<18);
 
+    int flags = 0;
+#if __linux__
+    flags |= MAP_32BIT;
+#elif __APPLE__
+    flags |= MAP_JIT;
+#else
+#error "unsupported os"
+#endif
+
 #ifdef __amd64__
         // allocate memory which address fits inside a 32bit pointer (makes sure we can use 32bit rip relative addressing)
         void* new_chunk = mmap(0, mem_chunk_bytes_remaining,
-                               PROT_READ | PROT_WRITE | PROT_EXEC,
-                               /*MAP_32BIT |*/ MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
+                               PROT_READ | PROT_WRITE | (jit_rwx ? PROT_EXEC : 0),
+                               MAP_PRIVATE | MAP_ANONYMOUS | flags, -1, 0);
 #elif __aarch64__
         // we try to allocate a memory block close to our AOT functions, because on ARM64 the relative call insruction 'bl'
         // can only address +-128MB from current IP. And this allows us to use bl for most calls.
@@ -4589,10 +4631,14 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             // but if not possible will just return a different address.
             // If the returned adddress does not fix in 32bit we abort the JIT compilation.
 #ifndef MAP_FIXED_NOREPLACE
+#if __APPLE__
+#define MAP_FIXED_NOREPLACE 0
+#else
 #define MAP_FIXED_NOREPLACE 0x100000
 #endif
+#endif
             new_chunk = mmap(start_addr + mem_bytes_allocated, mem_chunk_bytes_remaining,
-                             PROT_READ | PROT_WRITE | PROT_EXEC,
+                             PROT_READ | PROT_WRITE | PROT_EXEC | (jit_rwx ? PROT_EXEC : 0),
                              MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         }
 #else
@@ -4715,6 +4761,12 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         }
         Py_DECREF(str_newline);
         Py_DECREF(str_newline_escaped);
+    }
+
+    if (!jit_rwx) {
+        long offset = (char*)labels[lbl_entry] - (char*)mem;
+        //fprintf(stderr, "%p %p %ld\n", (char*)labels[lbl_entry], (char*)mem, offset);
+        mprotect(labels[lbl_entry], size - offset, PROT_READ | PROT_EXEC);
     }
 
     __builtin___clear_cache((char*)mem, &((char*)mem)[size]);
