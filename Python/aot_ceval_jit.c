@@ -4605,7 +4605,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             if (new_chunk != MAP_FAILED)
                 munmap(new_chunk, mem_chunk_bytes_remaining);
             mem_chunk_bytes_remaining = 0;
-            fpruntf(stderr, "mmap() returned error %d", errno);
+            fprintf(stderr, "mmap() returned error %d", errno);
             abort();
             goto failed;
         }
