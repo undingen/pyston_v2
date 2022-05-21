@@ -15,5 +15,5 @@ jobs:
           export PATH="/usr/local/opt/luajit-openresty/bin:$PATH"
           export PATH="/usr/local/opt/python@3.8/bin:$PATH"
 
-          cd pyston/pyston_lite; make test
+          cd pyston/pyston_lite; CC=gcc-11 make test
 
