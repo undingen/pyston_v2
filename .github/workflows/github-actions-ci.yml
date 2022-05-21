@@ -10,7 +10,6 @@ jobs:
           git submodule update --init pyston/LuaJIT
       - name: run code
         run: |
-          brew list --versions
           brew install luajit-openresty python@3.8
           export PATH="/usr/local/opt/luajit-openresty/bin:$PATH"
           export PATH="/usr/local/opt/python@3.8/bin:$PATH"

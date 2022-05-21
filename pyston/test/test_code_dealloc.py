@@ -1,7 +1,8 @@
 import gc
 import resource
+import platform
 
-if __name__ == "__main__":
+if __name__ == "__main__" and platform.system() == "Linux":
     resource.setrlimit(resource.RLIMIT_AS, (2<<20, 2<<20))
 
     for i in range(100000):
