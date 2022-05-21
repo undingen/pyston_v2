@@ -12,6 +12,7 @@ jobs:
         run: |
           brew install luajit-openresty python@3.8
           export PATH="/usr/local/opt/luajit-openresty/bin:$PATH"
+          brew reinstall python@3.8
 
           cd pyston/pyston_lite; make test
 
