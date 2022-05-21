@@ -4576,7 +4576,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         // allocate memory which address fits inside a 32bit pointer (makes sure we can use 32bit rip relative addressing)
         void* new_chunk = mmap(0, mem_chunk_bytes_remaining,
                                PROT_READ | PROT_WRITE | PROT_EXEC,
-                               MAP_32BIT | MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
+                               /*MAP_32BIT |*/ MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
 #elif __aarch64__
         // we try to allocate a memory block close to our AOT functions, because on ARM64 the relative call insruction 'bl'
         // can only address +-128MB from current IP. And this allows us to use bl for most calls.
@@ -4605,6 +4605,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             if (new_chunk != MAP_FAILED)
                 munmap(new_chunk, mem_chunk_bytes_remaining);
             mem_chunk_bytes_remaining = 0;
+            fpruntf(stderr, "mmap() returned error %d", errno);
             abort();
             goto failed;
         }
