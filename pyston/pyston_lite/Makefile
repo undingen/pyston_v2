@@ -29,9 +29,10 @@ clean:
 	rm -rf *.o *.so env
 
 
-env: pyston_lite.so
+env:
 	$(PYTHON) -m venv env
-	cp pyston_lite.so autoload/pyston_lite_autoload.pth env/lib/$(DIR)/site-packages/
+	env/bin/pip install -e .
+	cp autoload/pyston_lite_autoload.pth env/lib/$(DIR)/site-packages/
 	touch $@
 
 # Skip the tests in ../test/ that test within virtual environments, because pyston-lite
