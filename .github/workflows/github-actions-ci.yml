@@ -8,6 +8,8 @@ jobs:
       - name: checkout submodules
         run: |
           git submodule update --init pyston/LuaJIT
+      - name: run code
+        run: |
           brew install luajit-openresty
-          make test -j$(nproc)
+          cd pyston/pyston_lite; make test
 
