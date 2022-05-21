@@ -9,5 +9,5 @@ jobs:
         run: |
           git submodule update --init pyston/LuaJIT
           brew install luajit-openresty
-          /pyston_dir/.github/workflows/pyston_lite.sh
+          make test -j$(nproc)
 
