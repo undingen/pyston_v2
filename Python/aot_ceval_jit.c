@@ -393,12 +393,20 @@ static void* __attribute__ ((const)) get_addr_of_helper_func(int opcode, int opa
 #undef JIT_HELPER_ADDR
 }
 
-static void* __attribute__ ((const)) get_addr_of_aot_func(int opcode, int oparg, int opcache_available) {
-    #define OPCODE_STATIC(x, func) if (opcode == x) return (func)
+
+static void* __attribute__ ((const)) get_addr_of_aot_func(int opcode, int oparg, int opcache_available, int *is_patchable) {
+    *is_patchable = 0;
+
+#define OPCODE_STATIC(x, func, patchable)   do { \
+                                                if (opcode == x) { \
+                                                    *is_patchable = (patchable); \
+                                                    return (func); \
+                                                } \
+                                            } while (0)
 #ifdef PYSTON_LITE
-    #define OPCODE_PROFILE(x, func) OPCODE_STATIC(x, func)
+    #define OPCODE_PROFILE(x, func) OPCODE_STATIC(x, func, 0)
 #else
-    #define OPCODE_PROFILE(x, func) OPCODE_STATIC(x, jit_use_aot ? func##Profile : func)
+    #define OPCODE_PROFILE(x, func) OPCODE_STATIC(x, jit_use_aot ? func##Profile : func, jit_use_aot)
 #endif
 
     OPCODE_PROFILE(UNARY_POSITIVE, PyNumber_Positive);
@@ -447,20 +455,21 @@ static void* __attribute__ ((const)) get_addr_of_aot_func(int opcode, int oparg,
     OPCODE_PROFILE(BINARY_SUBSCR, PyObject_GetItem);
     OPCODE_PROFILE(DELETE_SUBSCR, PyObject_DelItem);
 
-    OPCODE_STATIC(LOAD_GLOBAL, JIT_HELPER_LOAD_GLOBAL);
+    OPCODE_STATIC(LOAD_GLOBAL, JIT_HELPER_LOAD_GLOBAL, 0 /*= not patchable */);
     if (opcache_available) {
-        OPCODE_STATIC(LOAD_ATTR, JIT_HELPER_LOAD_ATTR_CACHED);
-        OPCODE_STATIC(STORE_ATTR, JIT_HELPER_STORE_ATTR_CACHED);
-        OPCODE_STATIC(LOAD_METHOD, JIT_HELPER_LOAD_METHOD_CACHED);
+        OPCODE_STATIC(LOAD_ATTR, JIT_HELPER_LOAD_ATTR_CACHED, 1 /*= patchable */);
+        OPCODE_STATIC(STORE_ATTR, JIT_HELPER_STORE_ATTR_CACHED, 1 /*= patchable */);
+        OPCODE_STATIC(LOAD_METHOD, JIT_HELPER_LOAD_METHOD_CACHED, 1 /*= patchable */);
     } else {
-        OPCODE_STATIC(LOAD_ATTR, JIT_HELPER_LOAD_ATTR);
-        OPCODE_STATIC(STORE_ATTR, JIT_HELPER_STORE_ATTR);
-        OPCODE_STATIC(LOAD_METHOD, JIT_HELPER_LOAD_METHOD);
+        OPCODE_STATIC(LOAD_ATTR, JIT_HELPER_LOAD_ATTR, 0 /*= not patchable */);
+        OPCODE_STATIC(STORE_ATTR, JIT_HELPER_STORE_ATTR, 0 /*= not patchable */);
+        OPCODE_STATIC(LOAD_METHOD, JIT_HELPER_LOAD_METHOD, 0 /*= not patchable */);
     }
 
     if (opcode == COMPARE_OP) {
 #ifndef PYSTON_LITE
         if (jit_use_aot) {
+            *is_patchable = 1;
             switch (oparg) {
             case PyCmp_LT: return cmp_outcomePyCmp_LTProfile;
             case PyCmp_LE: return cmp_outcomePyCmp_LEProfile;
@@ -1356,8 +1365,8 @@ static void emit_jg_to_bytecode_n(Jit* Dst, int num_bytes) {
     | branch_gt =>dst_idx
 }
 
-static void emit_call_ext_func(Jit* Dst, void* addr) {
-    if (!jit_use_rwx) {
+static void emit_call_ext_func(Jit* Dst, void* addr, int is_patchable) {
+    if (is_patchable && !jit_use_rwx) {
         int old_section = Dst->current_section;
         switch_section(Dst, SECTION_JMP_TABLE);
         |9:
@@ -1379,22 +1388,26 @@ static void emit_call_ext_func(Jit* Dst, void* addr) {
     if (can_use_relative_call(addr)) {
         | bl &addr // +-128MB from current IP
     } else {
-        JIT_ASSERT(tmp2_idx == 6, "SET_JIT_AOT_FUNC needs to be adopted");
-        // we can't use 'emit_mov_imm' because we have to make sure
-        // that we always generate this 5 instruction sequence because SET_JIT_AOT_FUNC is patching it later.
-        // encodes as: 0x52800006 | (addr&0xFFFF)<<5 (=Rw(tmp2_idx)) or 0xD2800006 (=Rx(tmp2_idx))
-        // note: we use Rx() DynASM sometimes encodes the instruction as Rw() here
-        //       because the 32bit op clears the higher 32bit it does not change things.
-        | mov Rx(tmp2_idx), #(unsigned long)addr&UINT16_MAX
-        // encodes as: 0xF2A00006 | ((addr>>16)&0xFFFF)<<5
-        | movk Rx(tmp2_idx), #((unsigned long)addr>>16)&UINT16_MAX, lsl #16
-
-        // encodes as: 0xF2C00006 | ((addr>>32)&0xFFFF)<<5
-        | movk Rx(tmp2_idx), #((unsigned long)addr>>32)&UINT16_MAX, lsl #32
-        // encodes as: 0xF2E00006 | ((addr>>48)&0xFFFF)<<5
-        | movk Rx(tmp2_idx), #((unsigned long)addr>>48)&UINT16_MAX, lsl #48
-        // encodes as: 0xD63F00C0
-        | blr tmp2
+        if (is_patchable) {
+            JIT_ASSERT(tmp2_idx == 6, "SET_JIT_AOT_FUNC needs to be adopted");
+            // we can't use 'emit_mov_imm' because we have to make sure
+            // that we always generate this 5 instruction sequence because SET_JIT_AOT_FUNC is patching it later.
+            // encodes as: 0x52800006 | (addr&0xFFFF)<<5 (=Rw(tmp2_idx)) or 0xD2800006 (=Rx(tmp2_idx))
+            // note: we use Rx() DynASM sometimes encodes the instruction as Rw() here
+            //       because the 32bit op clears the higher 32bit it does not change things.
+            | mov Rx(tmp2_idx), #(unsigned long)addr&UINT16_MAX
+            // encodes as: 0xF2A00006 | ((addr>>16)&0xFFFF)<<5
+            | movk Rx(tmp2_idx), #((unsigned long)addr>>16)&UINT16_MAX, lsl #16
+            // encodes as: 0xF2C00006 | ((addr>>32)&0xFFFF)<<5
+            | movk Rx(tmp2_idx), #((unsigned long)addr>>32)&UINT16_MAX, lsl #32
+            // encodes as: 0xF2E00006 | ((addr>>48)&0xFFFF)<<5
+            | movk Rx(tmp2_idx), #((unsigned long)addr>>48)&UINT16_MAX, lsl #48
+            // encodes as: 0xD63F00C0
+            | blr tmp2
+        } else {
+            emit_mov_imm(Dst, tmp_idx, (unsigned long)addr);
+            | blr tmp
+        }
     }
     | mov res, real_res
 @ARM_END
@@ -1409,10 +1422,20 @@ static void emit_call_ext_func(Jit* Dst, void* addr) {
         // then the destination of the call instruction (=relative address of the function to call) is modified.
         | call qword &addr // 5byte inst
     } else {
-        | mov64 res, (unsigned long)addr
+        if (is_patchable) {
+            | mov64 res, (unsigned long)addr
+        } else {
+            emit_mov_imm(Dst, res_idx, (unsigned long)addr);
+        }
         | call res // compiles to: 0xff 0xd0
     }
 @X86_END
+}
+static void emit_call(Jit* Dst, void* addr) {
+    emit_call_ext_func(Dst, addr, 0 /*=not patchable*/);
+}
+static void emit_call_patchable(Jit* Dst, void* addr) {
+    emit_call_ext_func(Dst, addr, 1 /*=patchable*/);
 }
 
 // r_idx contains the PyObject to decref
@@ -1515,7 +1538,7 @@ static void emit_xdecref(Jit* Dst, int reg_idx) {
 
 // emits a call afterwards decrefs OWNED arguments
 // regs and ref_status arrays must be at least num entries long
-static void emit_call_decref_args(Jit* Dst, void* func, int num, int regs[], RefStatus ref_status[]) {
+static void emit_call_decref_args(Jit* Dst, void* func, int num, int regs[], RefStatus ref_status[], int is_patchable) {
     // we have to move owned args to preserved regs (callee saved regs) or to slack slots
     // to be able to decref after the call
 
@@ -1544,7 +1567,7 @@ static void emit_call_decref_args(Jit* Dst, void* func, int num, int regs[], Ref
         ++num_owned;
     }
 
-    emit_call_ext_func(Dst, func);
+    emit_call_ext_func(Dst, func, is_patchable);
 
     for (int i=0, num_decref=0; i<num; ++i) {
         if (ref_status[i] != OWNED)
@@ -1564,21 +1587,23 @@ static void emit_call_decref_args(Jit* Dst, void* func, int num, int regs[], Ref
         ++num_decref;
     }
 }
-static void emit_call_decref_args1(Jit* Dst, void* func, int r1_idx, RefStatus ref_status[]) {
+static void emit_call_decref_args1(Jit* Dst, void* func, int r1_idx, RefStatus ref_status[], int is_patchable) {
     int regs[] = { r1_idx };
-    emit_call_decref_args(Dst, func, 1, regs, ref_status);
+    emit_call_decref_args(Dst, func, 1, regs, ref_status, is_patchable);
 }
-static void emit_call_decref_args2(Jit* Dst, void* func, int r1_idx, int r2_idx, RefStatus ref_status[]) {
+static void emit_call_decref_args2(Jit* Dst, void* func, int r1_idx, int r2_idx, RefStatus ref_status[], int is_patchable) {
     int regs[] = { r1_idx, r2_idx };
-    emit_call_decref_args(Dst, func, 2, regs, ref_status);
+    emit_call_decref_args(Dst, func, 2, regs, ref_status, is_patchable);
 }
-static void emit_call_decref_args3(Jit* Dst, void* func, int r1_idx, int r2_idx, int r3_idx, RefStatus ref_status[]) {
+static void emit_call_decref_args3(Jit* Dst, void* func, int r1_idx, int r2_idx, int r3_idx, RefStatus ref_status[], int is_patchable) {
     int regs[] = { r1_idx, r2_idx, r3_idx };
-    emit_call_decref_args(Dst, func, 3, regs, ref_status);
+    emit_call_decref_args(Dst, func, 3, regs, ref_status, is_patchable);
 }
 
-static void* get_aot_func_addr(Jit* Dst, int opcode, int oparg, int opcache_available) {
-    return get_addr_of_aot_func(opcode, oparg, opcache_available);
+static void emit_call_aot_func(Jit* Dst, int opcode, int oparg, int opcache_available) {
+    int is_patchable = 0;
+    void* func = get_addr_of_aot_func(opcode, oparg, opcache_available, &is_patchable);
+    emit_call_ext_func(Dst, func, is_patchable);
 }
 
 static void emit_mov_inst_addr_to_tmp(Jit* Dst, int r_inst_idx) {
@@ -2100,7 +2125,7 @@ static void emit_jump_if_false(Jit* Dst, int oparg, RefStatus ref_status) {
     if (jit_use_aot)
         func = PyObject_IsTrueProfile;
 #endif
-    emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
+    emit_call_decref_args1(Dst, func, arg1_idx, &ref_status, jit_use_aot /* is_patchable */);
     emit_cmp32_imm(Dst, res_idx, 0);
     emit_je_to_bytecode_n(Dst, oparg);
     | branch_lt ->error
@@ -2124,7 +2149,7 @@ static void emit_jump_if_true(Jit* Dst, int oparg, RefStatus ref_status) {
     if (jit_use_aot)
         func = PyObject_IsTrueProfile;
 #endif
-    emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
+    emit_call_decref_args1(Dst, func, arg1_idx, &ref_status, jit_use_aot /* is_patchable */);
     emit_cmp32_imm(Dst, res_idx, 0);
     emit_jg_to_bytecode_n(Dst, oparg);
     | branch_lt ->error
@@ -2203,7 +2228,7 @@ static int emit_special_binary_subscr(Jit* Dst, int inst_idx, PyObject* const_va
     emit_mov_imm(Dst, arg3_idx, n);
     void* func = jit_use_aot ? PyObject_GetItemLongProfile : PyObject_GetItemLong;
 #endif
-    emit_call_decref_args2(Dst, func, arg2_idx, arg1_idx, ref_status);
+    emit_call_decref_args2(Dst, func, arg2_idx, arg1_idx, ref_status, jit_use_aot /* is_patchable */);
     emit_if_res_0_error(Dst);
     if (use_cold_section) {
         | branch >2
@@ -2252,8 +2277,9 @@ static int emit_special_store_subscr(Jit* Dst, int inst_idx, int opcode, int opa
 
     switch_section(Dst, SECTION_COLD);
     |1:
-    void* func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
-    emit_call_decref_args3(Dst, func, arg2_idx, arg1_idx, arg3_idx, ref_status);
+    int is_patchable = 0;
+    void* func = get_addr_of_aot_func(opcode, oparg, 0 /*= no op cache */, &is_patchable);
+    emit_call_decref_args3(Dst, func, arg2_idx, arg1_idx, arg3_idx, ref_status, is_patchable);
     emit_if_res_32b_not_0_error(Dst);
     | branch >2
     switch_section(Dst, SECTION_CODE);
@@ -2361,7 +2387,7 @@ static void emit_inline_cache_loadattr_entry(Jit* Dst, int opcode, int oparg, _P
             | mov arg1, arg5
             | mov arg2, tmp_preserved_reg
             emit_load64_mem(Dst, arg3_idx, tmp_preserved_reg_idx, offsetof(PyObject, ob_type));
-            emit_call_ext_func(Dst, descr->ob_type->tp_descr_get);
+            emit_call(Dst, descr->ob_type->tp_descr_get);
             | mov arg1, tmp_preserved_reg // restore the obj so that the decref code works
             // attr can be NULL
             emit_cmp64_imm(Dst, res_idx, 0);
@@ -2594,8 +2620,9 @@ static int emit_special_binary_op_refcnt1(Jit* Dst, int inst_idx, int opcode, in
     {
         switch_section(Dst, SECTION_COLD);
         |1:
-        void* func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
-        emit_call_decref_args2(Dst, func, arg2_idx, arg1_idx, ref_status);
+        int is_patchable = 0;
+        void* func = get_addr_of_aot_func(opcode, oparg, 0 /*= no op cache */, &is_patchable);
+        emit_call_decref_args2(Dst, func, arg2_idx, arg1_idx, ref_status, is_patchable);
         emit_if_res_0_error(Dst);
         if (jit_stats_enabled) {
             emit_inc_qword_ptr(Dst, &jit_stat_binary_op_refcnt1_miss, 0 /*=can't use tmp_reg*/);
@@ -2659,7 +2686,7 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
             }
             emit_mov_imm2(Dst, arg1_idx, PyTuple_GET_ITEM(Dst->co_names, oparg),
                                 arg2_idx, co_opcache);
-            emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */));
+            emit_call_aot_func(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */);
             emit_if_res_0_error(Dst);
             | branch <4 // jump to the common code which pushes the result
             // Switch back to the normal section
@@ -2807,7 +2834,7 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
                     emit_mov_imm2(Dst, arg1_idx, PyTuple_GET_ITEM(Dst->co_names, oparg),
                                         arg2_idx, co_opcache);
                 }
-                emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */));
+                emit_call_aot_func(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */);
                 emit_if_res_0_error(Dst);
                 | branch <5 // jump to the common code which pushes the result
 
@@ -2815,7 +2842,7 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
                     |3:
                     | mov tmp_preserved_reg, arg1
                     emit_mov_imm(Dst, arg2_idx, (uint64_t)PyTuple_GET_ITEM(Dst->co_names, oparg));
-                    emit_call_ext_func(Dst, loadAttrCacheAttrNotFound);
+                    emit_call(Dst, loadAttrCacheAttrNotFound);
                     | mov arg1, tmp_preserved_reg
                     emit_cmp64_imm(Dst, res_idx, 0);
                     | branch_ne <4 // jump to the common code which decrefs the obj and pushes the result
@@ -2886,7 +2913,7 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
                     }
                     emit_mov_imm2(Dst, arg2_idx, (void*)sa->u.split_dict_cache.splitdict_index,
                                     arg4_idx, PyTuple_GET_ITEM(Dst->co_names, oparg));
-                    emit_call_decref_args2(Dst, setItemSplitDictCache, arg5_idx, arg3_idx, ref_status);
+                    emit_call_decref_args2(Dst, setItemSplitDictCache, arg5_idx, arg3_idx, ref_status, 0 /*=not patchable*/);
                     emit_if_res_32b_not_0_error(Dst);
                 } else {
                     // arg1 = (obj + dictoffset)
@@ -2907,7 +2934,7 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
 
                     emit_mov_imm2(Dst, arg4_idx, (void*)sa->u.split_dict_cache.splitdict_index,
                                        arg5_idx, PyTuple_GET_ITEM(Dst->co_names, oparg));
-                    emit_call_decref_args2(Dst, setItemInitSplitDictCache, arg2_idx, arg3_idx, ref_status);
+                    emit_call_decref_args2(Dst, setItemInitSplitDictCache, arg2_idx, arg3_idx, ref_status, 0 /*=not patchable*/);
                     emit_if_res_32b_not_0_error(Dst);
                 }
 
@@ -2932,7 +2959,7 @@ static int emit_inline_cache(Jit* Dst, int opcode, int oparg, _PyOpcache* co_opc
                 emit_mov_imm2(Dst, arg1_idx, PyTuple_GET_ITEM(Dst->co_names, oparg),
                                 arg4_idx, co_opcache);
 
-                emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */));
+                emit_call_aot_func(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */);
                 emit_if_res_0_error(Dst);
                 | branch <5 // jump to the common code which pushes the result
                 switch_section(Dst, SECTION_CODE);
@@ -3460,7 +3487,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 | type_check arg2_idx, &PyUnicode_Type, >1
 
                 emit_add_or_sub_imm(Dst, arg1_idx, f_idx, get_fastlocal_offset(unicode_concat));
-                emit_call_decref_args2(Dst, PyUnicode_Append, arg2_idx, arg1_idx, ref_status);
+                emit_call_decref_args2(Dst, PyUnicode_Append, arg2_idx, arg1_idx, ref_status, 0 /*=not patchable*/);
 
                 emit_cmp64_mem_imm(Dst, f_idx, get_fastlocal_offset(unicode_concat), 0 /* = value */);
                 | branch_eq ->error
@@ -3472,8 +3499,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             }
 
             |1:
-            void* func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
-            emit_call_decref_args2(Dst, func, arg2_idx, arg1_idx, ref_status);
+            int is_patchable = 0;
+            void* func = get_addr_of_aot_func(opcode, oparg, 0 /*= no op cache */, &is_patchable);
+            emit_call_decref_args2(Dst, func, arg2_idx, arg1_idx, ref_status, is_patchable);
             emit_if_res_0_error(Dst);
             deferred_vs_push(Dst, REGISTER, res_idx);
             break;
@@ -3569,28 +3597,28 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                             }
 
                             if (method->vectorcall == method_vectorcall_NOARGS && num_args == 1) {
-                                emit_call_ext_func(Dst, funcptr);
+                                emit_call(Dst, funcptr);
 
                             } else if (method->vectorcall == method_vectorcall_O && num_args == 2) {
                                 // first python arg
                                 emit_load64_mem(Dst, arg2_idx, vsp_idx, -8 * num_args + 8);
-                                emit_call_ext_func(Dst, funcptr);
+                                emit_call(Dst, funcptr);
 
                             } else if (method->vectorcall == method_vectorcall_FASTCALL || method->vectorcall == method_vectorcall_FASTCALL_KEYWORDS) {
                                 emit_add_or_sub_imm(Dst, arg2_idx, vsp_idx, -8 * num_args + 8);
                                 emit_mov_imm(Dst, arg3_idx, num_args - 1);
                                 if (method->vectorcall == method_vectorcall_FASTCALL_KEYWORDS)
                                     emit_mov_imm(Dst, arg4_idx, 0); // kwnames
-                                emit_call_ext_func(Dst, funcptr);
+                                emit_call(Dst, funcptr);
 
                             } else if (method->vectorcall == method_vectorcall_VARARGS || method->vectorcall == method_vectorcall_VARARGS_KEYWORDS) {
                                 // Convert stack to tuple:
                                 emit_add_or_sub_imm(Dst, arg1_idx, vsp_idx, -8 * num_args + 8);
                                 emit_mov_imm(Dst, arg2_idx, num_args - 1);
 #ifdef PYSTON_LITE
-                                emit_call_ext_func(Dst, _PyTuple_FromArray);
+                                emit_call(Dst, _PyTuple_FromArray);
 #else
-                                emit_call_ext_func(Dst, _PyTuple_FromArray_Borrowed);
+                                emit_call(Dst, _PyTuple_FromArray_Borrowed);
 #endif
                                 emit_if_res_0_error(Dst);
                                 | mov tmp_preserved_reg, res
@@ -3599,14 +3627,14 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                                 | mov arg2, res // args
                                 if (method->vectorcall == method_vectorcall_VARARGS_KEYWORDS)
                                     emit_mov_imm(Dst, arg3_idx, 0); // kwargs
-                                emit_call_ext_func(Dst, funcptr);
+                                emit_call(Dst, funcptr);
 
                                 | mov arg1, tmp_preserved_reg
                                 | mov tmp_preserved_reg, res
 #ifdef PYSTON_LITE
                                 emit_decref(Dst, arg1_idx, 0);
 #else
-                                emit_call_ext_func(Dst, _PyTuple_Decref_Borrowed);
+                                emit_call(Dst, _PyTuple_Decref_Borrowed);
 #endif
                                 | mov res, tmp_preserved_reg
 
@@ -3630,12 +3658,12 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                                 | mov tmp_preserved_reg, res
                                 | mov arg1, vsp
                                 if (num_decrefs == 3) {
-                                    emit_call_ext_func(Dst, decref_array3);
+                                    emit_call(Dst, decref_array3);
                                 } else if (num_decrefs == 4) {
-                                    emit_call_ext_func(Dst, decref_array4);
+                                    emit_call(Dst, decref_array4);
                                 } else {
                                     emit_mov_imm(Dst, arg2_idx, num_decrefs);
-                                    emit_call_ext_func(Dst, decref_array);
+                                    emit_call(Dst, decref_array);
                                 }
                                 | mov res, tmp_preserved_reg
                             } else {
@@ -3685,7 +3713,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 @X86            | cmp qword [vsp - (8*num_vs_args)], 1
 @X86            | sbb arg3, -1
             }
-            emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */));
+            emit_call_aot_func(Dst, opcode, oparg, 0 /*= no op cache */);
             emit_adjust_vs(Dst, -num_vs_args);
 
             emit_if_res_0_error(Dst);
@@ -3713,7 +3741,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
             switch_section(Dst, SECTION_COLD);
             |1:
-            emit_call_ext_func(Dst, JIT_HELPER_FOR_ITER_SECOND_PART);
+            emit_call(Dst, JIT_HELPER_FOR_ITER_SECOND_PART);
             emit_if_res_0_error(Dst);
             emit_jump_by_n_bytecodes(Dst, oparg, inst_idx);
             switch_section(Dst, SECTION_CODE);
@@ -3729,8 +3757,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         {
             RefStatus ref_status = deferred_vs_pop1(Dst, arg1_idx);
             deferred_vs_convert_reg_to_stack(Dst);
-            void* func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
-            emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
+            int is_patchable = 0;
+            void* func = get_addr_of_aot_func(opcode, oparg, 0 /*= no op cache */, &is_patchable);
+            emit_call_decref_args1(Dst, func, arg1_idx, &ref_status, is_patchable);
             if (opcode == UNARY_NOT) {
 @ARM            emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
 @ARM            emit_cmp32_imm(Dst, res_idx, 0); // 32bit comparison!
@@ -3760,8 +3789,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 deferred_vs_convert_reg_to_stack(Dst);
 
                 if (emit_special_store_subscr(Dst, inst_idx, opcode, oparg, const_val, ref_status)<0) {
-                    void* func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
-                    emit_call_decref_args3(Dst, func, arg2_idx, arg1_idx, arg3_idx, ref_status);
+                    int is_patchable = 0;
+                    void* func = get_addr_of_aot_func(opcode, oparg, 0 /*= no op cache */, &is_patchable);
+                    emit_call_decref_args3(Dst, func, arg2_idx, arg1_idx, arg3_idx, ref_status, is_patchable);
                     emit_if_res_32b_not_0_error(Dst);
                 }
             } else {
@@ -3769,7 +3799,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 emit_read_vs(Dst, arg2_idx, 1 /*=top*/);
                 emit_read_vs(Dst, arg1_idx, 2 /*=second*/);
                 emit_read_vs(Dst, arg3_idx, 3 /*=third*/);
-                emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */));
+                emit_call_aot_func(Dst, opcode, oparg, 0 /*= no op cache */);
                 emit_if_res_32b_not_0_error(Dst);
                 for (int i=0; i<3; ++i) {
                     emit_read_vs(Dst, arg1_idx, i+1);
@@ -3784,8 +3814,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             RefStatus ref_status[2];
             deferred_vs_pop2(Dst, arg2_idx, arg1_idx, ref_status);
             deferred_vs_convert_reg_to_stack(Dst);
-            void* func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
-            emit_call_decref_args2(Dst, func, arg2_idx, arg1_idx, ref_status);
+            int is_patchable = 0;
+            void* func = get_addr_of_aot_func(opcode, oparg, 0 /*= no op cache */, &is_patchable);
+            emit_call_decref_args2(Dst, func, arg2_idx, arg1_idx, ref_status, is_patchable);
             emit_if_res_32b_not_0_error(Dst);
             break;
         }
@@ -3795,7 +3826,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             // todo: handle during bytecode generation,
             //       this could be normal code object constant entry
             emit_mov_imm(Dst, arg1_idx, (inst_idx+1) * 2);
-            emit_call_ext_func(Dst, PyLong_FromLong);
+            emit_call(Dst, PyLong_FromLong);
             emit_if_res_0_error(Dst);
             emit_push_v(Dst, res_idx);
             emit_jump_by_n_bytecodes(Dst, oparg, inst_idx);
@@ -3817,7 +3848,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
                 // inside CALL_FINALLY we created a long with the bytecode offset to the next instruction
                 // extract it and jump to it
-                emit_call_decref_args1(Dst, PyLong_AsLong, arg1_idx, &ref_status);
+                emit_call_decref_args1(Dst, PyLong_AsLong, arg1_idx, &ref_status, 0 /*=not patchable*/);
                 emit_jmp_to_inst_idx(Dst, res_idx);
 
                 |2:
@@ -3826,7 +3857,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 emit_read_vs(Dst, arg3_idx, 1 /*=top*/);
                 emit_read_vs(Dst, arg4_idx, 2 /*=second*/);
                 emit_adjust_vs(Dst, -2);
-                emit_call_ext_func(Dst, _PyErr_Restore);
+                emit_call(Dst, _PyErr_Restore);
                 | branch ->exception_unwind
                 exception_unwind_label_used = 1;
                 switch_section(Dst, SECTION_CODE);
@@ -3841,7 +3872,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_peek(Dst, arg1_idx, oparg);
             deferred_vs_convert_reg_to_stack(Dst);
             void* func = opcode == SET_ADD ? PySet_Add : PyList_Append;
-            emit_call_decref_args1(Dst, func, arg2_idx, &ref_status);
+            emit_call_decref_args1(Dst, func, arg2_idx, &ref_status, 0 /*=not patchable*/);
             emit_if_res_32b_not_0_error(Dst);
             break;
         }
@@ -3852,7 +3883,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_pop2(Dst, arg3_idx, arg2_idx, ref_status);
             deferred_vs_peek(Dst, arg1_idx, oparg);
             deferred_vs_convert_reg_to_stack(Dst);
-            emit_call_decref_args2(Dst, PyDict_SetItem, arg3_idx, arg2_idx, ref_status);
+            emit_call_decref_args2(Dst, PyDict_SetItem, arg3_idx, arg2_idx, ref_status, 0 /*=not patchable*/);
             emit_if_res_32b_not_0_error(Dst);
             break;
         }
@@ -3865,7 +3896,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             | mov arg1, tstate
             | mov arg2, f
             emit_mov_imm(Dst, arg3_idx, (unsigned long)PyTuple_GET_ITEM(Dst->co_names, oparg));
-            emit_call_decref_args2(Dst, import_name, arg4_idx, arg5_idx, ref_status);
+            emit_call_decref_args2(Dst, import_name, arg4_idx, arg5_idx, ref_status, 0 /*=not patchable*/);
             emit_if_res_0_error(Dst);
             deferred_vs_push(Dst, REGISTER, res_idx);
             break;
@@ -3876,7 +3907,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_convert_reg_to_stack(Dst);
             | mov arg1, tstate
             emit_mov_imm(Dst, arg3_idx, (unsigned long)PyTuple_GET_ITEM(Dst->co_names, oparg));
-            emit_call_ext_func(Dst, import_from);
+            emit_call(Dst, import_from);
             emit_if_res_0_error(Dst);
             deferred_vs_push(Dst, REGISTER, res_idx);
             break;
@@ -3887,7 +3918,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_convert_reg_to_stack(Dst);
             emit_mov_imm(Dst, arg2_idx, (unsigned long)PyTuple_GET_ITEM(Dst->co_names, oparg));
             emit_mov_imm(Dst, arg3_idx, 0);
-            emit_call_decref_args1(Dst, PyObject_SetAttr, arg1_idx, &ref_status);
+            emit_call_decref_args1(Dst, PyObject_SetAttr, arg1_idx, &ref_status, 0 /*=not patchable*/);
             emit_if_res_32b_not_0_error(Dst);
             break;
         }
@@ -3898,7 +3929,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_convert_reg_to_stack(Dst);
             emit_load64_mem(Dst, arg1_idx, f_idx, offsetof(PyFrameObject, f_globals));
             emit_mov_imm(Dst, arg2_idx, (unsigned long)PyTuple_GET_ITEM(Dst->co_names, oparg));
-            emit_call_decref_args1(Dst, PyDict_SetItem, arg3_idx, &ref_status);
+            emit_call_decref_args1(Dst, PyDict_SetItem, arg3_idx, &ref_status, 0 /*=not patchable*/);
             emit_if_res_32b_not_0_error(Dst);
             break;
         }
@@ -3914,7 +3945,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 deferred_vs_pop2_owned(Dst, arg2_idx, arg1_idx);
             }
             deferred_vs_convert_reg_to_stack(Dst);
-            emit_call_ext_func(Dst, PySlice_NewSteal);
+            emit_call(Dst, PySlice_NewSteal);
             emit_if_res_0_error(Dst);
             deferred_vs_push(Dst, REGISTER, res_idx);
             break;
@@ -3934,9 +3965,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_convert_reg_to_stack(Dst);
             emit_mov_imm(Dst, arg1_idx, oparg);
 #ifdef PYSTON_LITE
-            emit_call_ext_func(Dst, opcode == BUILD_LIST ? PyList_New : PyTuple_New);
+            emit_call(Dst, opcode == BUILD_LIST ? PyList_New : PyTuple_New);
 #else
-            emit_call_ext_func(Dst, opcode == BUILD_LIST ? PyList_New : PyTuple_New_Nonzeroed);
+            emit_call(Dst, opcode == BUILD_LIST ? PyList_New : PyTuple_New_Nonzeroed);
 #endif
             emit_if_res_0_error(Dst);
             if (oparg) {
@@ -4002,7 +4033,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 |->deref_error: // assumes that oparg is in arg3!
                 | mov arg1, tstate
                 emit_mov_imm(Dst, arg2_idx, (unsigned long)co);
-                emit_call_ext_func(Dst, format_exc_unbound);
+                emit_call(Dst, format_exc_unbound);
                 | branch ->error
             }
 
@@ -4046,13 +4077,13 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             | sub arg4, [f + offsetof(PyFrameObject, f_valuestack)]
             | sar arg4, 3 // divide by 8 = sizeof(void*)
 @X86_END
-            emit_call_ext_func(Dst, PyFrame_BlockSetup);
+            emit_call(Dst, PyFrame_BlockSetup);
             break;
 
         case POP_BLOCK:
             deferred_vs_convert_reg_to_stack(Dst);
             | mov arg1, f
-            emit_call_ext_func(Dst, PyFrame_BlockPop);
+            emit_call(Dst, PyFrame_BlockPop);
             break;
 
         case BEGIN_FINALLY:
@@ -4068,7 +4099,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             if (co->co_flags & CO_ASYNC_GENERATOR) {
                 RefStatus ref_status = deferred_vs_pop1(Dst, arg1_idx);
                 deferred_vs_apply(Dst);
-                emit_call_decref_args1(Dst, _PyAsyncGenValueWrapperNew, arg1_idx, &ref_status);
+                emit_call_decref_args1(Dst, _PyAsyncGenValueWrapperNew, arg1_idx, &ref_status, 0 /*=not patchable*/);
                 emit_if_res_0_error(Dst);
             } else {
                 deferred_vs_pop1_owned(Dst, res_idx);
@@ -4228,23 +4259,23 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                     // so instead of doing two 64-bit moves, we can do the second
                     // one as a lea off the first one and save a few bytes
                     emit_mov_imm_using_diff(Dst, arg2_idx, arg1_idx, co_opcache, PyTuple_GET_ITEM(Dst->co_names, oparg));
-                    emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */));
+                    emit_call_aot_func(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */);
                     break;
 
                 case LOAD_ATTR:
                     emit_mov_imm_using_diff(Dst, arg3_idx, arg1_idx, co_opcache, PyTuple_GET_ITEM(Dst->co_names, oparg));
-                    emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */));
+                    emit_call_aot_func(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */);
                     break;
 
                 case STORE_ATTR:
                     emit_mov_imm_using_diff(Dst, arg4_idx, arg1_idx, co_opcache, PyTuple_GET_ITEM(Dst->co_names, oparg));
-                    emit_call_ext_func(Dst, get_aot_func_addr(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */));
+                    emit_call_aot_func(Dst, opcode, oparg, co_opcache != 0 /*= use op cache */);
                     break;
 
 
                 // default path which nearly all opcodes take: just generate a normal call
                 default:
-                    emit_call_ext_func(Dst, get_addr_of_helper_func(opcode, oparg));
+                    emit_call(Dst, get_addr_of_helper_func(opcode, oparg));
             }
 
 
@@ -4384,7 +4415,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     |->handle_signal_res_in_use:
     // we have to preserve res because it's used by our deferred stack optimizations
     | mov tmp_preserved_reg, res
-    emit_call_ext_func(Dst, eval_breaker_jit_helper);
+    emit_call(Dst, eval_breaker_jit_helper);
     emit_cmp32_imm(Dst, res_idx, 0);
     // on error we have to decref 'res' (which is now in 'tmp_preserved_reg')
     | branch_ne ->error_decref_tmp_preserved_reg
@@ -4393,7 +4424,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     | branch ->handle_signal_jump_to_inst
 
     |->handle_signal_res_not_in_use:
-    emit_call_ext_func(Dst, eval_breaker_jit_helper);
+    emit_call(Dst, eval_breaker_jit_helper);
     emit_if_res_32b_not_0_error(Dst);
     // fall through
 
@@ -4444,7 +4475,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // we come here if the result of LOAD_FAST or DELETE_FAST is null
     |->unboundlocal_error:
     // arg1 must be oparg!
-    emit_call_ext_func(Dst, JIT_HELPER_UNBOUNDLOCAL_ERROR);
+    emit_call(Dst, JIT_HELPER_UNBOUNDLOCAL_ERROR);
     // fallthrough to error
 
     |->error:
@@ -4541,7 +4572,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
     | branch_ne >9
     | mov arg1, f
-    emit_call_ext_func(Dst, debug_error_not_a_jump_target);
+    emit_call(Dst, debug_error_not_a_jump_target);
 
     |9:
 #endif
