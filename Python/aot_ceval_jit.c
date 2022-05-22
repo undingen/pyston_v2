@@ -393,6 +393,8 @@ static void* __attribute__ ((const)) get_addr_of_helper_func(int opcode, int opa
 #undef JIT_HELPER_ADDR
 }
 
+#define JIT_CHUNK_SIZE (1<<18) // allocate jitted code regions in 256KB chunks
+static int jit_alloc_chunk(void);
 
 static void* __attribute__ ((const)) get_addr_of_aot_func(int opcode, int oparg, int opcache_available, int *is_patchable) {
     *is_patchable = 0;
@@ -1367,16 +1369,24 @@ static void emit_jg_to_bytecode_n(Jit* Dst, int num_bytes) {
 
 static void emit_call_ext_func(Jit* Dst, void* addr, int is_patchable) {
     if (is_patchable && !jit_use_rwx) {
-        int old_section = Dst->current_section;
-        switch_section(Dst, SECTION_JMP_TABLE);
-        |9:
-        emit_64bit_value(Dst, (long)addr);
-        switch_section(Dst, old_section);
+        fprintf(stderr, "mem_chunk_bytes_remaining %ld\n", mem_chunk_bytes_remaining);
+        if (mem_chunk_bytes_remaining < sizeof(void*)) {
+            fprintf(stderr, "alloc\n");
+            if (jit_alloc_chunk() < 0) {
+                Dst->failed = 1;
+                return;
+            }
+        }
+        fprintf(stderr, "mem_chunk_bytes_remaining %ld\n", mem_chunk_bytes_remaining);
+        mem_chunk_bytes_remaining -= sizeof(void*);
+        void** entry = (void**)&mem_chunk[mem_chunk_bytes_remaining];
+        *entry = addr;
+
         // call QWORD PTR [rip+offset_32bit]
         // encodes as: 0xff 0x15 <offset_32bit>
-@X86    | call qword [<9]
+@X86    | call qword [entry]
 
-@ARM    | ldr x5, <9
+@ARM    | ldr x5, &entry
 @ARM    | blr x5
 @ARM    | mov res, real_res
         ++Dst->num_jmp_table_entries;
@@ -4628,75 +4638,35 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         goto failed;
     }
 
-    if (jit_use_rwx) {
-        // Align code regions to cache line boundaries.
-        // I don't know concretely that this is important but seems like
-        // something maybe you're supposed to do?
-        size = (size + 15) / 16 * 16;
-    } else {
-        // Align to next page
-        size = (size + 4095) / 4096 * 4096;
+    // Align code regions to cache line boundaries.
+    // I don't know concretely that this is important but seems like
+    // something maybe you're supposed to do?
+    size = (size + 15) / 16 * 16;
+
+    if (size > JIT_CHUNK_SIZE) {
+        // this function is too large don't compile it
+        goto failed;
     }
 
-    // Allocate jitted code regions in 256KB chunks:
     if (size > mem_chunk_bytes_remaining) {
-        mem_chunk_bytes_remaining = size > (1<<18) ? size : (1<<18);
-
-    int flags = 0;
-#if __linux__ && __amd64__
-    flags |= MAP_32BIT;
-#elif __APPLE__
-    flags |= MAP_JIT;
-#endif
-#ifdef __amd64__
-        // allocate memory which address fits inside a 32bit pointer (makes sure we can use 32bit rip relative addressing)
-        void* new_chunk = mmap(0, mem_chunk_bytes_remaining,
-                               PROT_READ | PROT_WRITE | (jit_use_rwx ? PROT_EXEC : 0),
-                               MAP_PRIVATE | MAP_ANONYMOUS | flags, -1, 0);
-#elif __aarch64__
-        // we try to allocate a memory block close to our AOT functions, because on ARM64 the relative call insruction 'bl'
-        // can only address +-128MB from current IP. And this allows us to use bl for most calls.
-        void* new_chunk = MAP_FAILED;
-        // try allocate memory 25MB after this AOT func.
-        char* start_addr = (char*)(((uint64_t)LAYOUT_TARGET + 25*1024*1024 + 4095) / 4096 * 4096);
-        for (int i=0; i<8 && new_chunk == MAP_FAILED; ++i, start_addr += 5*1024*1024) {
-            // MAP_FIXED_NOREPLACE is available from linux 4.17, but older glibc don't define it.
-            // Older kernel will ignore this flag and will try to allocate the address supplied as hint
-            // but if not possible will just return a different address.
-            // If the returned adddress does not fix in 32bit we abort the JIT compilation.
-#ifndef MAP_FIXED_NOREPLACE
-#if __APPLE__
-#define MAP_FIXED_NOREPLACE 0
-#else
-#define MAP_FIXED_NOREPLACE 0x100000
-#endif
-#endif
-            new_chunk = mmap(start_addr + mem_bytes_allocated, mem_chunk_bytes_remaining,
-                             PROT_READ | PROT_WRITE | (jit_use_rwx ? PROT_EXEC : 0),
-                             MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        }
-#else
-#error "unknown arch"
-#endif
-        if (new_chunk == MAP_FAILED /*|| !can_use_relative_call(new_chunk)*/) {
-#if JIT_DEBUG
-            JIT_ASSERT(0, "mmap() returned error %d", errno);
-#endif
-            fprintf(stderr, "mmap() returned error %d", errno);
-            if (new_chunk != MAP_FAILED)
-                munmap(new_chunk, mem_chunk_bytes_remaining);
-            mem_chunk_bytes_remaining = 0;
-            abort();
+        if (jit_alloc_chunk() < 0) {
             goto failed;
         }
-        mem_chunk = new_chunk;
-        mem_bytes_allocated += (mem_chunk_bytes_remaining + 4095) / 4096 * 4096;
     }
 
     void* mem = mem_chunk;
     mem_chunk += size;
     mem_chunk_bytes_remaining -= size;
     mem_bytes_used += size;
+
+    if (!jit_use_rwx) {
+        unsigned long addr = (unsigned long)mem;
+        int offset_from_page_start = addr % 4096;
+        char* page_start = (char*)(addr - offset_from_page_start);
+        if (mprotect(page_start, offset_from_page_start+size, PROT_READ | PROT_WRITE) < 0) {
+            goto failed;
+        }
+    }
 
     int dasm_encode_err = dasm_encode(Dst, mem);
     if (dasm_encode_err) {
@@ -4798,9 +4768,13 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     }
 
     if (!jit_use_rwx) {
-        long offset = (char*)labels[lbl_entry] - (char*)mem;
         //fprintf(stderr, "%p %p %ld\n", (char*)labels[lbl_entry], (char*)mem, offset);
-        mprotect(labels[lbl_entry], size - offset, PROT_READ | PROT_EXEC);
+        unsigned long addr = (unsigned long)labels[lbl_entry];
+        int offset_from_page_start = addr % 4096;
+        char* page_start = (char*)(addr - offset_from_page_start);
+        if (mprotect(page_start, offset_from_page_start+size, PROT_READ | PROT_EXEC) < 0) {
+            goto failed;
+        }
     }
 
     __builtin___clear_cache((char*)mem, &((char*)mem)[size]);
@@ -4967,4 +4941,57 @@ void jit_finish() {
 
     if (perf_map_opcode_map)
         fclose(perf_map_opcode_map);
+}
+
+static int jit_alloc_chunk(void) {
+    mem_chunk_bytes_remaining = JIT_CHUNK_SIZE;
+
+    int flags = 0;
+#if __linux__ && __amd64__
+    flags |= MAP_32BIT;
+#elif __APPLE__
+    flags |= MAP_JIT;
+#endif
+#ifdef __amd64__
+    // allocate memory which address fits inside a 32bit pointer (makes sure we can use 32bit rip relative addressing)
+    void* new_chunk = mmap(0, mem_chunk_bytes_remaining,
+                            PROT_READ | PROT_WRITE | (jit_use_rwx ? PROT_EXEC : 0),
+                            MAP_PRIVATE | MAP_ANONYMOUS | flags, -1, 0);
+#elif __aarch64__
+    // we try to allocate a memory block close to our AOT functions, because on ARM64 the relative call insruction 'bl'
+    // can only address +-128MB from current IP. And this allows us to use bl for most calls.
+    void* new_chunk = MAP_FAILED;
+    // try allocate memory 25MB after this AOT func.
+    char* start_addr = (char*)(((uint64_t)LAYOUT_TARGET + 25*1024*1024 + 4095) / 4096 * 4096);
+    for (int i=0; i<8 && new_chunk == MAP_FAILED; ++i, start_addr += 5*1024*1024) {
+        // MAP_FIXED_NOREPLACE is available from linux 4.17, but older glibc don't define it.
+        // Older kernel will ignore this flag and will try to allocate the address supplied as hint
+        // but if not possible will just return a different address.
+        // If the returned adddress does not fix in 32bit we abort the JIT compilation.
+#ifndef MAP_FIXED_NOREPLACE
+#if __APPLE__
+#define MAP_FIXED_NOREPLACE 0
+#else
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+#endif
+        new_chunk = mmap(start_addr + mem_bytes_allocated, mem_chunk_bytes_remaining,
+                            PROT_READ | PROT_WRITE | (jit_use_rwx ? PROT_EXEC : 0),
+                            MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    }
+#else
+#error "unknown arch"
+#endif
+    if (new_chunk == MAP_FAILED /*|| !can_use_relative_call(new_chunk)*/) {
+#if JIT_DEBUG
+        JIT_ASSERT(0, "mmap() returned error %d", errno);
+#endif
+        fprintf(stderr, "mmap() returned error %d", errno);
+        if (new_chunk != MAP_FAILED)
+            munmap(new_chunk, mem_chunk_bytes_remaining);
+        mem_chunk_bytes_remaining = 0;
+        return -1;
+    }
+    mem_chunk = new_chunk;
+    mem_bytes_allocated += (mem_chunk_bytes_remaining + 4095) / 4096 * 4096;
 }
