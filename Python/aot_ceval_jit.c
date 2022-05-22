@@ -139,7 +139,6 @@ typedef enum Section {
     SECTION_COLD,
     SECTION_DEOPT,
     SECTION_ENTRY,
-    SECTION_JMP_TABLE,
     SECTION_OPCODE_ADDR,
 } Section;
 
@@ -396,7 +395,7 @@ static void* __attribute__ ((const)) get_addr_of_helper_func(int opcode, int opa
 #define JIT_CHUNK_SIZE (1<<18) // allocate jitted code regions in 256KB chunks
 static int jit_alloc_chunk(void);
 
-static void* __attribute__ ((const)) get_addr_of_aot_func(int opcode, int oparg, int opcache_available, int *is_patchable) {
+static void* get_addr_of_aot_func(int opcode, int oparg, int opcache_available, int *is_patchable) {
     *is_patchable = 0;
 
 #define OPCODE_STATIC(x, func, patchable)   do { \
@@ -767,7 +766,7 @@ static unsigned long jit_stat_binary_op_refcnt1, jit_stat_binary_op_refcnt1_miss
 @X86|.arch x64
 
 // section layout is same as specified here from left to right
-|.section jump_table, entry, code, cold, deopt, opcode_addr
+|.section entry, code, cold, deopt, opcode_addr
 
 ////////////////////////////////
 // REGISTER DEFINITIONS
@@ -866,8 +865,6 @@ static void switch_section(Jit* Dst, Section new_section) {
         |.deopt
     } else if (new_section == SECTION_ENTRY) {
         |.entry
-    } else if (new_section == SECTION_JMP_TABLE) {
-        |.jump_table
     } else if (new_section == SECTION_OPCODE_ADDR) {
         |.opcode_addr
     } else {
@@ -1369,22 +1366,22 @@ static void emit_jg_to_bytecode_n(Jit* Dst, int num_bytes) {
 
 static void emit_call_ext_func(Jit* Dst, void* addr, int is_patchable) {
     if (is_patchable && !jit_use_rwx) {
-        fprintf(stderr, "mem_chunk_bytes_remaining %ld\n", mem_chunk_bytes_remaining);
+        //fprintf(stderr, "mem_chunk_bytes_remaining %ld\n", mem_chunk_bytes_remaining);
         if (mem_chunk_bytes_remaining < sizeof(void*)) {
-            fprintf(stderr, "alloc\n");
+            //fprintf(stderr, "alloc\n");
             if (jit_alloc_chunk() < 0) {
                 Dst->failed = 1;
                 return;
             }
         }
-        fprintf(stderr, "mem_chunk_bytes_remaining %ld\n", mem_chunk_bytes_remaining);
+        //fprintf(stderr, "mem_chunk_bytes_remaining %ld\n", mem_chunk_bytes_remaining);
         mem_chunk_bytes_remaining -= sizeof(void*);
         void** entry = (void**)&mem_chunk[mem_chunk_bytes_remaining];
         *entry = addr;
 
         // call QWORD PTR [rip+offset_32bit]
         // encodes as: 0xff 0x15 <offset_32bit>
-@X86    | call qword [entry]
+@X86    | callindirectrip qword &entry
 
 @ARM    | ldr x5, &entry
 @ARM    | blr x5
@@ -4612,13 +4609,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     }
 #endif
 
-    if (Dst->num_jmp_table_entries) {
-        switch_section(Dst, SECTION_JMP_TABLE);
-        //fprintf(stderr, "n %d %d\n", Dst->num_jmp_table_entries, 4096 - (Dst->num_jmp_table_entries % (4096/8)*8));
-@X86    |.space 4096 - (Dst->num_jmp_table_entries % (4096/8)*8)
-@ARM    for (int n=(4096 - (Dst->num_jmp_table_entries % (4096/8)*8))/8; n; --n) emit_64bit_value(Dst, 0);
-    }
-
     if (Dst->failed)
         goto failed;
 
@@ -4648,7 +4638,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         goto failed;
     }
 
-    if (size > mem_chunk_bytes_remaining) {
+    if (size > mem_chunk_bytes_remaining / 4096 * 4096) {
         if (jit_alloc_chunk() < 0) {
             goto failed;
         }
@@ -4663,6 +4653,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         unsigned long addr = (unsigned long)mem;
         int offset_from_page_start = addr % 4096;
         char* page_start = (char*)(addr - offset_from_page_start);
+        //fprintf(stderr, "rw: %p %ld\n", page_start, offset_from_page_start+size);
         if (mprotect(page_start, offset_from_page_start+size, PROT_READ | PROT_WRITE) < 0) {
             goto failed;
         }
@@ -4768,10 +4759,10 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     }
 
     if (!jit_use_rwx) {
-        //fprintf(stderr, "%p %p %ld\n", (char*)labels[lbl_entry], (char*)mem, offset);
-        unsigned long addr = (unsigned long)labels[lbl_entry];
+        unsigned long addr = (unsigned long)mem;
         int offset_from_page_start = addr % 4096;
         char* page_start = (char*)(addr - offset_from_page_start);
+        //fprintf(stderr, "rx: %p %ld\n", page_start, offset_from_page_start+size);
         if (mprotect(page_start, offset_from_page_start+size, PROT_READ | PROT_EXEC) < 0) {
             goto failed;
         }
