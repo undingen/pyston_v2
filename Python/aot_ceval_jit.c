@@ -274,7 +274,7 @@ struct PerfMapEntry {
     long func_size;
 } *perf_map_funcs;
 
-static int jit_use_aot = 1, jit_use_ics = 1, jit_rwx = 0;
+static int jit_use_aot = 1, jit_use_ics = 1, jit_use_rwx = 1;
 
 static PyObject* cmp_outcomePyCmp_BAD(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_BAD, v, w);
@@ -966,6 +966,11 @@ static int can_use_relative_call(void *addr) {
 static void emit_32bit_value(Jit* Dst, long value) {
     |.long value // this is called long but actually emits a 32bit value
 }
+// writes 64bit value to executable memory
+static void emit_64bit_value(Jit* Dst, long value) {
+    emit_32bit_value(Dst, value & UINT32_MAX);
+    emit_32bit_value(Dst, value >> 32);
+}
 
 // emits: $r_dst = $r_src
 static void emit_mov64_reg(Jit* Dst, int r_dst, int r_src) {
@@ -1352,15 +1357,19 @@ static void emit_jg_to_bytecode_n(Jit* Dst, int num_bytes) {
 }
 
 static void emit_call_ext_func(Jit* Dst, void* addr) {
-    if (!jit_rwx) {
+    if (!jit_use_rwx) {
         int old_section = Dst->current_section;
         switch_section(Dst, SECTION_JMP_TABLE);
         |9:
-        |.aword (unsigned long)addr
+        emit_64bit_value(Dst, (long)addr);
         switch_section(Dst, old_section);
         // call QWORD PTR [rip+offset_32bit]
         // encodes as: 0xff 0x15 <offset_32bit>
 @X86    | call qword [<9]
+
+@ARM    | ldr x5, <9
+@ARM    | blr x5
+@ARM    | mov res, real_res
         ++Dst->num_jmp_table_entries;
         return;
     }
@@ -4565,11 +4574,8 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     if (Dst->num_jmp_table_entries) {
         switch_section(Dst, SECTION_JMP_TABLE);
         //fprintf(stderr, "n %d %d\n", Dst->num_jmp_table_entries, 4096 - (Dst->num_jmp_table_entries % (4096/8)*8));
-        /*
-        for (int i=0; i<4096 - (Dst->num_jmp_table_entries % (4096/8)*8); ++i) {
-            |.qword 0
-        }*/
-        |.space 4096 - (Dst->num_jmp_table_entries % (4096/8)*8)
+@X86    |.space 4096 - (Dst->num_jmp_table_entries % (4096/8)*8)
+@ARM    for (int n=(4096 - (Dst->num_jmp_table_entries % (4096/8)*8))/8; n; --n) emit_64bit_value(Dst, 0);
     }
 
     if (Dst->failed)
@@ -4591,7 +4597,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         goto failed;
     }
 
-    if (jit_rwx) {
+    if (jit_use_rwx) {
         // Align code regions to cache line boundaries.
         // I don't know concretely that this is important but seems like
         // something maybe you're supposed to do?
@@ -4606,18 +4612,15 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         mem_chunk_bytes_remaining = size > (1<<18) ? size : (1<<18);
 
     int flags = 0;
-#if __linux__
+#if __linux__ && __amd64__
     flags |= MAP_32BIT;
 #elif __APPLE__
     flags |= MAP_JIT;
-#else
-#error "unsupported os"
 #endif
-
 #ifdef __amd64__
         // allocate memory which address fits inside a 32bit pointer (makes sure we can use 32bit rip relative addressing)
         void* new_chunk = mmap(0, mem_chunk_bytes_remaining,
-                               PROT_READ | PROT_WRITE | (jit_rwx ? PROT_EXEC : 0),
+                               PROT_READ | PROT_WRITE | (jit_use_rwx ? PROT_EXEC : 0),
                                MAP_PRIVATE | MAP_ANONYMOUS | flags, -1, 0);
 #elif __aarch64__
         // we try to allocate a memory block close to our AOT functions, because on ARM64 the relative call insruction 'bl'
@@ -4638,7 +4641,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #endif
 #endif
             new_chunk = mmap(start_addr + mem_bytes_allocated, mem_chunk_bytes_remaining,
-                             PROT_READ | PROT_WRITE | PROT_EXEC | (jit_rwx ? PROT_EXEC : 0),
+                             PROT_READ | PROT_WRITE | (jit_use_rwx ? PROT_EXEC : 0),
                              MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         }
 #else
@@ -4763,7 +4766,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         Py_DECREF(str_newline_escaped);
     }
 
-    if (!jit_rwx) {
+    if (!jit_use_rwx) {
         long offset = (char*)labels[lbl_entry] - (char*)mem;
         //fprintf(stderr, "%p %p %ld\n", (char*)labels[lbl_entry], (char*)mem, offset);
         mprotect(labels[lbl_entry], size - offset, PROT_READ | PROT_EXEC);
@@ -4875,6 +4878,10 @@ void jit_start() {
     val = getenv("JIT_USE_ICS");
     if (val)
         jit_use_ics = atoi(val);
+
+    val = getenv("JIT_USE_RWX");
+    if (val)
+        jit_use_rwx = atoi(val);
 
 #ifdef PYSTON_LITE
     // This is to get the value of lookdict_split, which is a static function:

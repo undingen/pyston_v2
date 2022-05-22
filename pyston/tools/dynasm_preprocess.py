@@ -55,7 +55,8 @@ import platform
 import sys
 
 ARCHS = {
-    "aarch64": "ARM",
+    "aarch64": "ARM", # linux
+    "arm64": "ARM",   # macos
     "x86_64": "X86",
 }
 

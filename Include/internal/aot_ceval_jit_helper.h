@@ -24,6 +24,7 @@ extern "C" {
 /* this directly modifies the destination of the jit generated call instruction */\
 #if __aarch64__
 #define SET_JIT_AOT_FUNC(dst_addr) do { \
+    abort();\
     /* retrieve address of the instruction following the call instruction */ \
     unsigned int* ret_addr = (unsigned int*)__builtin_extract_return_addr(__builtin_return_address(0)); \
     if (ret_addr[-1] == 0xD63F00C0 /* blr x6 */ ) { \
@@ -33,6 +34,13 @@ extern "C" {
         ret_addr[-3] = 0xF2C00006 | (((unsigned long)dst_addr>>32)&0xFFFF)<<5; \
         ret_addr[-2] = 0xF2E00006 | (((unsigned long)dst_addr>>48)&0xFFFF)<<5; \
         __builtin___clear_cache(&ret_addr[-5], &ret_addr[-1]); \
+    } else if (ret_addr[-1] == 0xD63F00A0 /* blr x5 */ ) { \
+        abort();\
+        int offset = ((ret_addr[-2] & 0x3ffc0) >> 6) * 4; \
+        fprintf(stderr, "entryp %p %p\n", ret_addr, ret_addr[-2]);\
+        unsigned long* jmp_table_entry = (unsigned long*)((char*)ret_addr + offset); \
+        fprintf(stderr, "entry %p %d %p %p\n", ret_addr, offset, ret_addr[-2], jmp_table_entry);\
+        *jmp_table_entry = (unsigned long)(dst_addr); \
     } else { \
         /* this updates the destination of the relative call instruction 'bl' */ \
         ret_addr[-1] = 0x94000000 | (((long)dst_addr - (long)&ret_addr[-1])&((1<<29)-1))>>2; \
