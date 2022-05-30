@@ -1,0 +1,31 @@
+name: Build pyston_lite wheels
+
+#on: [workflow_dispatch]
+on: [workflow_dispatch, push]
+
+jobs:
+  build_pyston_lite_wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-20.04, macos-10.15]
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: checkout submodules
+        run: |
+          git submodule update --init pyston/LuaJIT pyston/bolt
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.6.0
+        with:
+          package-dir: pyston/pyston_lite
+        env:
+          CIBW_BUILD: cp38-*
+          CIBW_SKIP: "*_i686 *musllinux*"
+          CIBW_BEFORE_ALL_LINUX: yum install -y luajit; make bolt -j`nproc`
+          CIBW_BEFORE_ALL_MACOS: brew install luajit-openresty gcc@11; ln -s /usr/local/opt/luajit-openresty/bin/luajit /usr/local/bin/; ln -sf /usr/local/bin/gcc-11 /usr/local/bin/gcc
+
+      - uses: actions/upload-artifact@v2
+        with:
+          path: ./wheelhouse/*.whl

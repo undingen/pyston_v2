@@ -12,6 +12,9 @@ NOBOLT = "NOBOLT" in os.environ or sys.platform == "darwin"
 NOLTO = "NOLTO" in os.environ or sys.platform == "darwin"
 NOPGO = "NOPGO" in os.environ
 
+def abs_path(relpath):
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), relpath))
+
 def check_call(args, **kw):
     print("check_call", " ".join([repr(a) for a in args]), kw)
     return subprocess.check_call(args, **kw)
@@ -62,7 +65,7 @@ class pyston_build_ext(build_ext):
                 if subprocess.check_output(["uname", "-m"]).decode("utf8").strip() == "aarch64":
                     parallel = "-j1"
 
-                subprocess.call([env_python, os.path.join(os.path.dirname(__file__), "../../Lib/test/regrtest.py"), parallel, "-unone,decimal", "-x"] + PGO_TESTS_TO_SKIP)
+                subprocess.call([env_python, abs_path("../../Lib/test/regrtest.py"), parallel, "-unone,decimal", "-x"] + PGO_TESTS_TO_SKIP)
 
             # Step 3, recompile using profiling data:
 
@@ -92,26 +95,26 @@ class pyston_build_ext(build_ext):
                 ext_name = self.get_ext_fullpath(ext.name)
                 os.rename(ext_name, ext_name + ".prebolt")
                 install_extname = os.path.join(site_packages, os.path.basename(ext_name))
-                check_call(["../../build/bolt/bin/llvm-bolt", ext_name + ".prebolt", "-instrument", "-instrumentation-file-append-pid", "-instrumentation-file=" + install_extname, "-o", install_extname, "-skip-funcs=_PyEval_EvalFrameDefault,_PyEval_EvalFrame_AOT_Interpreter.*"])
+                check_call([abs_path("../../build/bolt/bin/llvm-bolt"), ext_name + ".prebolt", "-instrument", "-instrumentation-file-append-pid", "-instrumentation-file=" + install_extname, "-o", install_extname, "-skip-funcs=_PyEval_EvalFrameDefault,_PyEval_EvalFrame_AOT_Interpreter.*"])
 
 
                 subprocess.call([env_python, os.path.join(os.path.dirname(__file__), "../../Lib/test/regrtest.py"), "-j0", "-unone,decimal", "-x"] + PGO_TESTS_TO_SKIP)
 
-                check_call(["../../build/bolt/bin/merge-fdata"] + glob.glob(install_extname + ".*.fdata"), stdout=open(install_extname + ".fdata", "wb"))
+                check_call([abs_path("../../build/bolt/bin/merge-fdata")] + glob.glob(install_extname + ".*.fdata"), stdout=open(install_extname + ".fdata", "wb"))
 
-                check_call(["../../build/bolt/bin/llvm-bolt", ext_name + ".prebolt", "-o", ext_name, "-data=" + install_extname + ".fdata", "-update-debug-sections", "-reorder-blocks=cache+", "-reorder-functions=hfsort+", "-split-functions=3", "-icf=1", "-inline-all", "-split-eh", "-reorder-functions-use-hot-size", "-peepholes=all", "-jump-tables=aggressive", "-inline-ap", "-indirect-call-promotion=all", "-dyno-stats", "-use-gnu-stack", "-jump-tables=none", "-frame-opt=hot"])
+                check_call([abs_path("../../build/bolt/bin/llvm-bolt"), ext_name + ".prebolt", "-o", ext_name, "-data=" + install_extname + ".fdata", "-update-debug-sections", "-reorder-blocks=cache+", "-reorder-functions=hfsort+", "-split-functions=3", "-icf=1", "-inline-all", "-split-eh", "-reorder-functions-use-hot-size", "-peepholes=all", "-jump-tables=aggressive", "-inline-ap", "-indirect-call-promotion=all", "-dyno-stats", "-use-gnu-stack", "-jump-tables=none", "-frame-opt=hot"])
                 os.unlink(ext_name + ".prebolt")
 
         del self.compiler._compile
 
     def run(self):
-        subprocess.check_call(["../../pyston/tools/dynasm_preprocess.py", "aot_ceval_jit.c", "aot_ceval_jit.prep.c"])
-        subprocess.check_call(["luajit", "../../pyston/LuaJIT/dynasm/dynasm.lua", "-o", "aot_ceval_jit.gen.c", "aot_ceval_jit.prep.c"])
+        subprocess.check_call([abs_path("../../pyston/tools/dynasm_preprocess.py"), "aot_ceval_jit.c", "aot_ceval_jit.prep.c"])
+        subprocess.check_call(["luajit", abs_path("../../pyston/LuaJIT/dynasm/dynasm.lua"), "-o", "aot_ceval_jit.gen.c", "aot_ceval_jit.prep.c"])
 
         super(pyston_build_ext, self).run()
 
 def get_cflags():
-    flags = ["-std=gnu99", "-fno-semantic-interposition", "-specs=../tools/no-pie-compile.specs"]
+    flags = ["-std=gnu99", "-fno-semantic-interposition", "-specs=" + abs_path("../tools/no-pie-compile.specs")]
     if not NOLTO:
         flags += ["-flto", "-fuse-linker-plugin", "-ffat-lto-objects", "-flto-partition=none"]
     if not NOBOLT:
@@ -119,7 +122,7 @@ def get_cflags():
     return flags
 
 def get_ldflags():
-    flags = ["-fno-semantic-interposition", "-specs=../tools/no-pie-link.specs"]
+    flags = ["-fno-semantic-interposition", "-specs=" + abs_path("../tools/no-pie-link.specs")]
     if not NOLTO:
         flags += ["-flto", "-fuse-linker-plugin", "-ffat-lto-objects", "-flto-partition=none"]
     if not NOBOLT:
@@ -129,7 +132,7 @@ def get_ldflags():
 ext = Extension(
         "pyston_lite",
         sources=["aot_ceval.c", "aot_ceval_jit.gen.c", "aot_ceval_jit_helper.c", "lib.c"],
-        include_dirs=["../../pyston/LuaJIT", os.path.join(sysconfig.get_python_inc(), "internal")],
+        include_dirs=[abs_path("../../pyston/LuaJIT"), os.path.join(sysconfig.get_python_inc(), "internal")],
         define_macros=[("PYSTON_LITE", None), ("PYSTON_SPEEDUPS", "1"), ("Py_BUILD_CORE", None), ("ENABLE_AOT", None)],
         extra_compile_args=get_cflags(),
         extra_link_args=get_ldflags(),
@@ -142,4 +145,5 @@ setup(name="pyston_lite",
       author="The Pyston Team",
       url="https://www.github.com/pyston/pyston",
       ext_modules=[ext],
+      python_requires="== 3.8.*",
 )
