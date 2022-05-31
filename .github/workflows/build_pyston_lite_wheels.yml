@@ -17,8 +17,8 @@ jobs:
         run: |
           git submodule update --init pyston/LuaJIT pyston/bolt
 
-      - name: macOS depedencies
-        if: ${{ matrix.version }} == 'macos-10.15' && success()
+      - name: install macOS depedencies
+        if: ${{ startsWith(matrix.version, 'macos') }}
         run: |
           brew install luajit-openresty gcc@11
           ln -s /usr/local/opt/luajit-openresty/bin/luajit /usr/local/bin/
