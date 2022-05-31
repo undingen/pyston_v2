@@ -23,6 +23,7 @@ jobs:
         env:
           CIBW_BUILD: cp38-*
           CIBW_SKIP: "*_i686 *musllinux*"
+          CIBW_BUILD_VERBOSITY_MACOS: 2
           CIBW_BEFORE_ALL_LINUX: yum install -y luajit; make bolt -j`nproc`
           CIBW_BEFORE_ALL_MACOS: brew install luajit-openresty gcc@11; ln -s /usr/local/opt/luajit-openresty/bin/luajit /usr/local/bin/; ln -sf /usr/local/bin/gcc-11 /usr/local/bin/gcc
 
