@@ -42,7 +42,7 @@ jobs:
           CIBW_SKIP: "*_i686 *musllinux*"
           CIBW_BUILD_VERBOSITY_MACOS: 2
           #CIBW_BEFORE_ALL_LINUX: yum install -y luajit; make bolt -j`nproc`
-          CIBW_BEFORE_ALL_LINUX: yum install -y luajit
+          CIBW_BEFORE_ALL_LINUX: yum install -y luajit; export NOBOLT=1; export NOPGO=1
           CIBW_TEST_COMMAND: python -m test -j0 -x test_code test_distutils test_ensurepip test_minidom test_site test_xml_etree test_xml_etree_c test_capi
           CIBW_TEST_REQUIRES: "{package}/wheelhouse/pyston_lite_autoload*.whl"
           NOPGO: 1
