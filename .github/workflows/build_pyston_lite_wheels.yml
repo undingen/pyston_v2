@@ -20,6 +20,9 @@ jobs:
       - name: install macOS depedencies
         if: ${{ startsWith(matrix.os, 'macos') }}
         run: |
+          curl https://www.python.org/ftp/python/3.8.10/python-3.8.10-macosx10.9.pkg -o python.pkg
+          sudo installer -pkg python.pkg -target /
+
           brew install luajit-openresty gcc@11
           ln -s /usr/local/opt/luajit-openresty/bin/luajit /usr/local/bin/
           echo "CC=gcc-11" >> $GITHUB_ENV
