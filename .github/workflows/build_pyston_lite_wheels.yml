@@ -45,7 +45,7 @@ jobs:
           CIBW_BUILD_VERBOSITY_MACOS: 2
           #CIBW_BEFORE_ALL_LINUX: yum install -y luajit; make bolt -j`nproc`
           CIBW_BEFORE_ALL_LINUX: yum install -y luajit; export NOBOLT=1; export NOPGO=1
-          CIBW_TEST_COMMAND: pip install {package}/wheelhouse/pyston_lite_autoload*.whl && python -m test -j0 -x test_code test_distutils test_ensurepip test_minidom test_site test_xml_etree test_xml_etree_c test_capi
+          CIBW_TEST_COMMAND: pip install {package}/wheelhouse/pyston_lite_autoload*.tar.gz && python -m test -j0 -x test_code test_distutils test_ensurepip test_minidom test_site test_xml_etree test_xml_etree_c test_capi
           NOPGO: 1
           NOBOLT: 1
 
