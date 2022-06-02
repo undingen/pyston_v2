@@ -170,3 +170,17 @@ jobs:
           # pyston must be compiled by gcc not clang
           CC=gcc-11 make test
           SHOW_JIT_STATS=1 ./env/bin/python ../test/inplace_math.py
+
+          git clean -x -i -d -f .
+          make package_autoload
+          mkdir wheelhouse/
+          cp autoload/dist/pyston_lite_autoload* wheelhouse/
+          python3 -m pip install cibuildwheel
+          python3 -m cibuildwheel --platform macos
+        env:
+          CIBW_BUILD: cp38-*
+          CIBW_SKIP: "*_i686"
+          CIBW_BUILD_VERBOSITY: 2
+      - uses: actions/upload-artifact@v2
+        with:
+          path: ./pyston/pyston_lite/wheelhouse/*.whl
