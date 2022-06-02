@@ -158,7 +158,7 @@ jobs:
       - name: setup dependencies
         run: |
           brew install gcc@11 luajit-openresty
-          echo 'PATH="/usr/local/opt/luajit-openresty/bin:$PATH"' >> $GITHUB_ENV
+          ln -s /usr/local/opt/luajit-openresty/bin/luajit /usr/local/bin/
           # gcc-11 is already in path
 
           # install official python3.8 package
