@@ -1575,6 +1575,52 @@ _PyDict_GetItemIndexSplitDict(PyObject *op, PyObject *key) {
 
     return (mp->ma_keys->dk_lookup)(mp, key, hash, &value);
 }
+
+PyObject* _PyDict_GetItemByOffsetSplit(PyDictObject *mp, PyObject *key, Py_ssize_t dk_size, int64_t ix) {
+    assert(PyDict_CheckExact((PyObject*)mp));
+    assert(PyUnicode_CheckExact(key));
+    assert(offset >= 0);
+
+    if (mp->ma_keys->dk_size != dk_size)
+        return NULL;
+
+    if (mp->ma_keys->dk_lookup != lookdict_split)
+        return NULL;
+
+    PyDictKeyEntry *ep = DK_ENTRIES(mp->ma_keys) + ix;
+    if (ep->me_key != key)
+        return NULL;
+
+    return mp->ma_values[ix];
+}
+
+int64_t _PyDict_GetItemOffsetSplit(PyDictObject *mp, PyObject *key, Py_ssize_t *dk_size)
+{
+    Py_hash_t hash;
+
+    assert(PyDict_CheckExact((PyObject*)mp));
+    assert(PyUnicode_CheckExact(key));
+
+    if ((hash = ((PyASCIIObject *) key)->hash) == -1)
+        return -1;
+
+    if (mp->ma_keys->dk_lookup != lookdict_split)
+        return -1;
+
+    // don't cache if error is set because we could overwrite it
+    if (PyErr_Occurred())
+        return -1;
+
+    PyObject *value = NULL;
+    Py_ssize_t ix = (mp->ma_keys->dk_lookup)(mp, key, hash, &value);
+    if (ix < 0) {
+        PyErr_Clear();
+        return -1;
+    }
+
+    *dk_size = mp->ma_keys->dk_size;
+    return ix;
+}
 #endif
 
 PyObject *
