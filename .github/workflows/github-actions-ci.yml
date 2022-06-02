@@ -167,14 +167,14 @@ jobs:
 
       - name: cibuildwheel
         run: |
-          cd pyston/pyston_lite
+          #cd pyston/pyston_lite
 
-          git clean -x -d -f .
-          make package_autoload
-          mkdir wheelhouse/
-          cp autoload/dist/pyston_lite_autoload* wheelhouse/
+          #git clean -x -d -f .
+          #make package_autoload
+          #mkdir wheelhouse/
+          #cp autoload/dist/pyston_lite_autoload* wheelhouse/
           # python3 -m pip install cibuildwheel pipx
-          CC=gcc-11 pipx run cibuildwheel --platform macos
+          CC=gcc-11 pipx run cibuildwheel --platform macos pyston/pyston_lite
         env:
           CIBW_BUILD: cp38-*
           CIBW_SKIP: "*_i686"
