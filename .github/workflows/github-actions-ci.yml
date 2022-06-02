@@ -158,7 +158,7 @@ jobs:
       - name: setup dependencies
         run: |
           brew install gcc@11 luajit-openresty
-          export PATH="/usr/local/opt/luajit-openresty/bin:$PATH"
+          echo 'PATH="/usr/local/opt/luajit-openresty/bin:$PATH"' >> $GITHUB_ENV
           # gcc-11 is already in path
 
           # install official python3.8 package
@@ -175,7 +175,7 @@ jobs:
         run: |
           cd pyston/pyston_lite
 
-          git clean -x -i -d -f .
+          git clean -x -d -f .
           make package_autoload
           mkdir wheelhouse/
           cp autoload/dist/pyston_lite_autoload* wheelhouse/
