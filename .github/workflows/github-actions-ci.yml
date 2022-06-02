@@ -155,7 +155,7 @@ jobs:
       - name: checkout submodules
         run: |
           git submodule update --init pyston/LuaJIT
-      - name: run code
+      - name: setup dependencies
         run: |
           brew install gcc@11 luajit-openresty
           export PATH="/usr/local/opt/luajit-openresty/bin:$PATH"
@@ -164,23 +164,27 @@ jobs:
           # install official python3.8 package
           curl https://www.python.org/ftp/python/3.8.10/python-3.8.10-macosx10.9.pkg -o python.pkg
           sudo installer -pkg python.pkg -target /
-
+      - name: make test
+        run: |
           cd pyston/pyston_lite
 
           # pyston must be compiled by gcc not clang
           CC=gcc-11 make test
           SHOW_JIT_STATS=1 ./env/bin/python ../test/inplace_math.py
+      - name: cibuildwheel
+        run: |
+          cd pyston/pyston_lite
 
           git clean -x -i -d -f .
           make package_autoload
           mkdir wheelhouse/
           cp autoload/dist/pyston_lite_autoload* wheelhouse/
           python3 -m pip install cibuildwheel
-          python3 -m cibuildwheel --platform macos
+          CC=gcc-11 python3 -m cibuildwheel --platform macos
         env:
           CIBW_BUILD: cp38-*
           CIBW_SKIP: "*_i686"
           CIBW_BUILD_VERBOSITY: 2
       - uses: actions/upload-artifact@v2
         with:
-          path: ./pyston/pyston_lite/wheelhouse/*.whl
+          path: ./pyston/pyston_lite/wheelhouse/
