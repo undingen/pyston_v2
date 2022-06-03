@@ -19,3 +19,4 @@ jobs:
           ./env/bin/pip install wheel
           ./env/bin/pip install wheelhouse/pyston_lite*
           ./env/bin/python /Library/Frameworks/Python.framework/Versions/3.8/lib/python3.8/test/test_concurrent_futures.py
+
