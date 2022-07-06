@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := env/lite.stamp
 
-PYTHON:=python3.8
+PYTHON?=python3.8
 
 package: build_wheels build_autoload_sdist
 

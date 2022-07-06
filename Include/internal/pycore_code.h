@@ -223,7 +223,7 @@ typedef struct {
 
 #endif
 
-struct _PyOpcache {
+typedef struct _PyOpcache {
     union {
         _PyOpcache_LoadGlobal lg;
 #if PYSTON_SPEEDUPS
@@ -238,7 +238,7 @@ struct _PyOpcache {
 #if PYSTON_SPEEDUPS
     char num_failed;
 #endif
-};
+} _PyOpcache;
 
 /* Private API */
 int _PyCode_InitOpcache(PyCodeObject *co);
