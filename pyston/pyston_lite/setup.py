@@ -147,7 +147,7 @@ ext = Extension(
 
 setup(name="pyston_lite",
       cmdclass={"build_ext":pyston_build_ext},
-      version="2.3.4.1",
+      version="2.3.4.2",
       description="A JIT for Python",
       author="The Pyston Team",
       url="https://www.github.com/pyston/pyston",
