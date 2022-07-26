@@ -4092,7 +4092,8 @@ return 0;
             emit_if_res_0_error(Dst);
             emit_cmp64_imm(Dst, res_idx, 1);
             | branch_eq >1
-            | and res, ~3 // clear 'goto_fast_block_end' flag
+@ARM        | and res, res, #~3 // clear 'goto_fast_block_end' flag
+@X86        | and res, ~3 // clear 'goto_fast_block_end' flag
             | branch ->exception_unwind
             exception_unwind_label_used = 1;
             |1:
@@ -4411,8 +4412,8 @@ return 0;
             deferred_vs_apply(Dst);
             emit_set_why(Dst, WHY_BREAK);
             //goto fast_block_end;
+            emit_mov_imm(Dst, res_idx, 0);
             exception_unwind_label_used = 1;
-            | mov res, 0
             | branch ->exception_unwind
             break;
 
@@ -4619,8 +4620,8 @@ return 0;
                     exception_unwind_label_used = 1;
 #if PY_MINOR_VERSION == 7
                     emit_set_why(Dst, WHY_EXCEPTION);
+                    emit_mov_imm(Dst, res_idx, 0);
 #endif
-                    | mov res, 0
                     | branch ->exception_unwind
                     break;
 
@@ -4729,7 +4730,8 @@ return 0;
         |->exception_unwind:
 #if PY_MINOR_VERSION == 7
         | mov real_res, res
-        | or real_res, 1
+@ARM    | orr real_res, real_res, #1
+@X86    | or real_res, 1
 #else
         emit_mov_imm(Dst, real_res_idx, 1);
 #endif
