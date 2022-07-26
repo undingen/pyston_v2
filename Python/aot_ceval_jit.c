@@ -4113,19 +4113,14 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 emit_jmp_to_inst_idx(Dst, res_idx);
 
                 |2:
-#if PY_MINOR_VERSION == 7
-                emit_read_vs(Dst, arg2_idx, 1 /*=top*/);
-                emit_read_vs(Dst, arg3_idx, 2 /*=second*/);
-                emit_adjust_vs(Dst, -2);
-                emit_call_ext_func(Dst, PyErr_Restore);
-#else
+                // warning: don't enter this path on Python 3.7
+                // because the function signature is different!
                 | mov arg2, arg1
                 | mov arg1, tstate
                 emit_read_vs(Dst, arg3_idx, 1 /*=top*/);
                 emit_read_vs(Dst, arg4_idx, 2 /*=second*/);
                 emit_adjust_vs(Dst, -2);
                 emit_call_ext_func(Dst, _PyErr_Restore);
-#endif
                 | branch ->exception_unwind
                 exception_unwind_label_used = 1;
                 switch_section(Dst, SECTION_CODE);
@@ -4732,9 +4727,12 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
     if (exception_unwind_label_used) {
         |->exception_unwind:
-        //emit_mov_imm(Dst, real_res_idx, 1);
+#if PY_MINOR_VERSION == 7
         | mov real_res, res
         | or real_res, 1
+#else
+        emit_mov_imm(Dst, real_res_idx, 1);
+#endif
         | branch ->return
     }
 
