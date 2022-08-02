@@ -2307,6 +2307,7 @@ static int emit_inline_cache_loadattr_supported(_PyOpcache *co_opcache, _PyOpcac
     return 1;
 }
 
+__attribute__((optimize("-O0")))
 static void emit_inline_cache_loadattr_entry(Jit* Dst, int opcode, int oparg, _PyOpcache_LoadAttr *la, int* emit_load_attr_res_0_helper) {
     int version_zero = emit_inline_cache_loadattr_is_version_zero(la);
 
