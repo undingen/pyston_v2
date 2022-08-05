@@ -158,6 +158,8 @@ long loadglobal_hits = 0, loadglobal_misses = 0, loadglobal_uncached = 0, loadgl
 #endif
 
 #ifdef PYSTON_LITE
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
 // In pyston-full we rely on LTO to inline cmp_outcome into the interpreter loop.
 // In pyston-lite we have to make the implementation available
 __attribute__((visibility("hidden"))) inline PyObject* cmp_outcome(PyThreadState *tstate, int, PyObject *v, PyObject *w);
@@ -185,6 +187,7 @@ PyObject* cmp_outcomePyCmp_IN(PyObject *v, PyObject *w) {
 PyObject* cmp_outcomePyCmp_NOT_IN(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_NOT_IN, v, w);
 }
+
 
 #define CANNOT_CATCH_MSG "catching classes that do not inherit from "\
                          "BaseException is not allowed"
@@ -239,6 +242,7 @@ cmp_outcome(PyThreadState *tstate, int op, PyObject *v, PyObject *w)
     Py_INCREF(v);
     return v;
 }
+#endif
 
 #if !(PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7)
 PyObject* _Py_HOT_FUNCTION
@@ -300,6 +304,109 @@ PyErr_Occurred(void)
         _PyRuntime.ceval.pending.async_exc = 0; \
         COMPUTE_EVAL_BREAKER(); \
     } while (0)
+
+#elif PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 9
+
+/* This can set eval_breaker to 0 even though gil_drop_request became
+   1.  We believe this is all right because the eval loop will release
+   the GIL eventually anyway. */
+static inline void
+COMPUTE_EVAL_BREAKER(PyInterpreterState *interp,
+                     struct _ceval_runtime_state *ceval,
+                     struct _ceval_state *ceval2)
+{
+    _Py_atomic_store_relaxed(&ceval2->eval_breaker,
+        _Py_atomic_load_relaxed(&ceval2->gil_drop_request)
+        | (_Py_atomic_load_relaxed(&ceval->signals_pending)
+           && _Py_ThreadCanHandleSignals(interp))
+        | (_Py_atomic_load_relaxed(&ceval2->pending.calls_to_do)
+           && _Py_ThreadCanHandlePendingCalls())
+        | ceval2->pending.async_exc);
+}
+
+
+static inline void
+SET_GIL_DROP_REQUEST(PyInterpreterState *interp)
+{
+    struct _ceval_state *ceval2 = &interp->ceval;
+    _Py_atomic_store_relaxed(&ceval2->gil_drop_request, 1);
+    _Py_atomic_store_relaxed(&ceval2->eval_breaker, 1);
+}
+
+
+static inline void
+RESET_GIL_DROP_REQUEST(PyInterpreterState *interp)
+{
+    struct _ceval_runtime_state *ceval = &interp->runtime->ceval;
+    struct _ceval_state *ceval2 = &interp->ceval;
+    _Py_atomic_store_relaxed(&ceval2->gil_drop_request, 0);
+    COMPUTE_EVAL_BREAKER(interp, ceval, ceval2);
+}
+
+
+static inline void
+SIGNAL_PENDING_CALLS(PyInterpreterState *interp)
+{
+    struct _ceval_runtime_state *ceval = &interp->runtime->ceval;
+    struct _ceval_state *ceval2 = &interp->ceval;
+    _Py_atomic_store_relaxed(&ceval2->pending.calls_to_do, 1);
+    COMPUTE_EVAL_BREAKER(interp, ceval, ceval2);
+}
+
+
+static inline void
+UNSIGNAL_PENDING_CALLS(PyInterpreterState *interp)
+{
+    struct _ceval_runtime_state *ceval = &interp->runtime->ceval;
+    struct _ceval_state *ceval2 = &interp->ceval;
+    _Py_atomic_store_relaxed(&ceval2->pending.calls_to_do, 0);
+    COMPUTE_EVAL_BREAKER(interp, ceval, ceval2);
+}
+
+
+static inline void
+SIGNAL_PENDING_SIGNALS(PyInterpreterState *interp, int force)
+{
+    struct _ceval_runtime_state *ceval = &interp->runtime->ceval;
+    struct _ceval_state *ceval2 = &interp->ceval;
+    _Py_atomic_store_relaxed(&ceval->signals_pending, 1);
+    if (force) {
+        _Py_atomic_store_relaxed(&ceval2->eval_breaker, 1);
+    }
+    else {
+        /* eval_breaker is not set to 1 if thread_can_handle_signals() is false */
+        COMPUTE_EVAL_BREAKER(interp, ceval, ceval2);
+    }
+}
+
+
+static inline void
+UNSIGNAL_PENDING_SIGNALS(PyInterpreterState *interp)
+{
+    struct _ceval_runtime_state *ceval = &interp->runtime->ceval;
+    struct _ceval_state *ceval2 = &interp->ceval;
+    _Py_atomic_store_relaxed(&ceval->signals_pending, 0);
+    COMPUTE_EVAL_BREAKER(interp, ceval, ceval2);
+}
+
+
+static inline void
+SIGNAL_ASYNC_EXC(PyInterpreterState *interp)
+{
+    struct _ceval_state *ceval2 = &interp->ceval;
+    ceval2->pending.async_exc = 1;
+    _Py_atomic_store_relaxed(&ceval2->eval_breaker, 1);
+}
+
+
+static inline void
+UNSIGNAL_ASYNC_EXC(PyInterpreterState *interp)
+{
+    struct _ceval_runtime_state *ceval = &interp->runtime->ceval;
+    struct _ceval_state *ceval2 = &interp->ceval;
+    ceval2->pending.async_exc = 0;
+    COMPUTE_EVAL_BREAKER(interp, ceval, ceval2);
+}
 
 #else
 
@@ -708,7 +815,7 @@ Py_AddPendingCall(int (*func)(void *), void *arg)
 }
 #endif
 
-#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 8
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
 static int
 handle_signals(_PyRuntimeState *runtime)
 {
@@ -786,6 +893,98 @@ error:
     SIGNAL_PENDING_CALLS(ceval);
     return res;
 }
+
+#elif PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+
+static int
+handle_signals(PyThreadState *tstate)
+{
+    assert(is_tstate_valid(tstate));
+    if (!_Py_ThreadCanHandleSignals(tstate->interp)) {
+        return 0;
+    }
+
+    UNSIGNAL_PENDING_SIGNALS(tstate->interp);
+    if (_PyErr_CheckSignalsTstate(tstate) < 0) {
+        /* On failure, re-schedule a call to handle_signals(). */
+        SIGNAL_PENDING_SIGNALS(tstate->interp, 0);
+        return -1;
+    }
+    return 0;
+}
+
+static int
+make_pending_calls(PyThreadState *tstate)
+{
+    assert(is_tstate_valid(tstate));
+
+    /* only execute pending calls on main thread */
+    if (!_Py_ThreadCanHandlePendingCalls()) {
+        return 0;
+    }
+
+    /* don't perform recursive pending calls */
+    static int busy = 0;
+    if (busy) {
+        return 0;
+    }
+    busy = 1;
+
+    /* unsignal before starting to call callbacks, so that any callback
+       added in-between re-signals */
+    UNSIGNAL_PENDING_CALLS(tstate->interp);
+    int res = 0;
+
+    /* perform a bounded number of calls, in case of recursion */
+    struct _pending_calls *pending = &tstate->interp->ceval.pending;
+    for (int i=0; i<NPENDINGCALLS; i++) {
+        int (*func)(void *) = NULL;
+        void *arg = NULL;
+
+        /* pop one item off the queue while holding the lock */
+        PyThread_acquire_lock(pending->lock, WAIT_LOCK);
+        _pop_pending_call(pending, &func, &arg);
+        PyThread_release_lock(pending->lock);
+
+        /* having released the lock, perform the callback */
+        if (func == NULL) {
+            break;
+        }
+        res = func(arg);
+        if (res) {
+            goto error;
+        }
+    }
+
+    busy = 0;
+    return res;
+
+error:
+    busy = 0;
+    SIGNAL_PENDING_CALLS(tstate->interp);
+    return res;
+}
+
+void
+_Py_FinishPendingCalls(PyThreadState *tstate)
+{
+    assert(PyGILState_Check());
+
+    struct _pending_calls *pending = &tstate->interp->ceval.pending;
+
+    if (!_Py_atomic_load_relaxed(&(pending->calls_to_do))) {
+        return;
+    }
+
+    if (make_pending_calls(tstate) < 0) {
+        PyObject *exc, *val, *tb;
+        _PyErr_Fetch(tstate, &exc, &val, &tb);
+        PyErr_BadInternalCall();
+        _PyErr_ChainExceptions(exc, val, tb);
+        _PyErr_Print(tstate);
+    }
+}
+
 #endif
 #if 0
 void
@@ -942,6 +1141,72 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET_UNSAFE();
     return interp->eval_frame(f, throwflag);
+}
+#endif
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+/* Handle signals, pending calls, GIL drop request
+   and asynchronous exception */
+static int
+eval_frame_handle_pending(PyThreadState *tstate)
+{
+    _PyRuntimeState * const runtime = &_PyRuntime;
+    struct _ceval_runtime_state *ceval = &runtime->ceval;
+
+    /* Pending signals */
+    if (_Py_atomic_load_relaxed(&ceval->signals_pending)) {
+        if (handle_signals(tstate) != 0) {
+            return -1;
+        }
+    }
+
+    /* Pending calls */
+    struct _ceval_state *ceval2 = &tstate->interp->ceval;
+    if (_Py_atomic_load_relaxed(&ceval2->pending.calls_to_do)) {
+        if (make_pending_calls(tstate) != 0) {
+            return -1;
+        }
+    }
+
+    /* GIL drop request */
+    if (_Py_atomic_load_relaxed(&ceval2->gil_drop_request)) {
+        /* Give another thread a chance */
+        if (_PyThreadState_Swap(&runtime->gilstate, NULL) != tstate) {
+            Py_FatalError("tstate mix-up");
+        }
+        drop_gil(ceval, ceval2, tstate);
+
+        /* Other threads may run now */
+
+        take_gil(tstate);
+
+        if (_PyThreadState_Swap(&runtime->gilstate, tstate) != NULL) {
+            Py_FatalError("orphan tstate");
+        }
+    }
+
+    /* Check for asynchronous exception. */
+    if (tstate->async_exc != NULL) {
+        PyObject *exc = tstate->async_exc;
+        tstate->async_exc = NULL;
+        UNSIGNAL_ASYNC_EXC(tstate->interp);
+        _PyErr_SetNone(tstate, exc);
+        Py_DECREF(exc);
+        return -1;
+    }
+
+#ifdef MS_WINDOWS
+    // bpo-42296: On Windows, _PyEval_SignalReceived() can be called in a
+    // different thread than the Python thread, in which case
+    // _Py_ThreadCanHandleSignals() is wrong. Recompute eval_breaker in the
+    // current Python thread with the correct _Py_ThreadCanHandleSignals()
+    // value. It prevents to interrupt the eval loop at every instruction if
+    // the current Python thread cannot handle signals (if
+    // _Py_ThreadCanHandleSignals() is false).
+    COMPUTE_EVAL_BREAKER(tstate->interp, ceval, ceval2);
+#endif
+
+    return 0;
 }
 #endif
 
@@ -1818,9 +2083,15 @@ _PyEval_EvalFrame_AOT_Interpreter(PyFrameObject *f, int throwflag, PyThreadState
 #endif
     PyObject **fastlocals, **freevars;
     PyObject *retval = NULL;            /* Return value */
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+    struct _ceval_state * const ceval = &tstate->interp->ceval;
+    struct _ceval_state * const ceval2 = &tstate->interp->ceval;
+    _Py_atomic_int * const eval_breaker = &ceval2->eval_breaker;
+#else
     _PyRuntimeState * const runtime = &_PyRuntime;
     struct _ceval_runtime_state * const ceval = &runtime->ceval;
     _Py_atomic_int * const eval_breaker = &ceval->eval_breaker;
+#endif
     PyCodeObject *co;
 
     /* when tracing we set things up so that
@@ -2385,6 +2656,12 @@ main_loop:
                 */
                 goto fast_next_opcode;
             }
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+            if (eval_frame_handle_pending(tstate) != 0) {
+                goto error;
+            }
+#else
+
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7
             if (_Py_atomic_load_relaxed(&_PyRuntime.ceval.pending.calls_to_do))
             {
@@ -2436,6 +2713,7 @@ main_loop:
                 goto error;
             }
         }
+#endif
 
     fast_next_opcode:
         f->f_lasti = INSTR_OFFSET();
@@ -5869,7 +6147,11 @@ _PyEval_EvalFrame_AOT
 PyObject* _Py_HOT_FUNCTION
 _PyEval_EvalFrameDefault
 #endif
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+(PyThreadState *tstate, PyFrameObject *f, int throwflag)
+#else
 (PyFrameObject *f, int throwflag)
+#endif
 {
     PyObject* retval = NULL;
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7
