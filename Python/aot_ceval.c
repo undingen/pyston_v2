@@ -542,6 +542,7 @@ _PyEval_FiniThreads(struct _ceval_runtime_state *ceval)
     }
 }
 #endif
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
 static inline void
 exit_thread_if_finalizing(_PyRuntimeState *runtime, PyThreadState *tstate)
 {
@@ -556,6 +557,7 @@ exit_thread_if_finalizing(_PyRuntimeState *runtime, PyThreadState *tstate)
         PyThread_exit_thread();
     }
 }
+#endif
 #if 0
 void
 _PyEval_Fini(void)
@@ -2727,8 +2729,8 @@ main_loop:
                 Py_DECREF(exc);
                 goto error;
             }
-        }
 #endif
+        }
 
     fast_next_opcode:
         f->f_lasti = INSTR_OFFSET();
@@ -4725,7 +4727,7 @@ sa_common:
                 goto error;
             }
             Py_DECREF(update);
-            PREDICT(CALL_FUNCTION_EX);
+            //PREDICT(CALL_FUNCTION_EX);
             DISPATCH();
         }
 #endif
@@ -6103,7 +6105,11 @@ exiting:
     f->f_executing = 0;
     tstate->frame = f->f_back;
 
+#ifndef PYSTON_LITE
     return _Py_CheckFunctionResult(NULL, retval, "PyEval_EvalFrameEx");
+#else
+    return retval;
+#endif
 }
 
 static PyObject* _Py_HOT_FUNCTION
@@ -6426,7 +6432,11 @@ exit_yielding:
     f->f_executing = 0;
     tstate->frame = f->f_back;
 
+#ifndef PYSTON_LITE
     return _Py_CheckFunctionResult(NULL, retval, "PyEval_EvalFrameEx");
+#else
+    return retval;
+#endif
 }
 
 // Entry point when executing a python function.
@@ -6447,7 +6457,7 @@ _PyEval_EvalFrameDefault
     PyObject* retval = NULL;
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7
     PyThreadState *tstate = PyThreadState_GET();
-#else
+#elif PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
     _PyRuntimeState * const runtime = &_PyRuntime;
     PyThreadState * const tstate = _PyRuntimeState_GetThreadState(runtime);
 #endif
@@ -6550,7 +6560,11 @@ exit_eval_frame:
     f->f_executing = 0;
     tstate->frame = f->f_back;
 
+#ifndef PYSTON_LITE
     return _Py_CheckFunctionResult(NULL, retval, "PyEval_EvalFrameEx");
+#else
+    return retval;
+#endif
 }
 
 #if 0
