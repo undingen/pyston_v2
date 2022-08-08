@@ -266,10 +266,12 @@ struct PerfMapEntry {
 
 static int jit_use_aot = 1, jit_use_ics = 1;
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
 static PyObject* cmp_outcomePyCmp_BAD(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_BAD, v, w);
 }
 PyObject* cmp_outcomePyCmp_EXC_MATCH(PyObject *v, PyObject *w);
+#endif
 
 int eval_breaker_jit_helper();
 PyObject* loadAttrCacheAttrNotFound(PyObject *owner, PyObject *name);
@@ -336,12 +338,6 @@ static void* __attribute__ ((const)) get_addr_of_helper_func(int opcode, int opa
         JIT_HELPER_ADDR(GET_AWAITABLE);
         JIT_HELPER_ADDR(YIELD_FROM);
         JIT_HELPER_ADDR(POP_EXCEPT);
-
-#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 8
-        JIT_HELPER_ADDR(POP_FINALLY);
-        JIT_HELPER_ADDR(END_ASYNC_FOR);
-#endif
-
         JIT_HELPER_ADDR(LOAD_BUILD_CLASS);
         JIT_HELPER_ADDR(STORE_NAME);
         JIT_HELPER_ADDR(DELETE_NAME);
@@ -350,24 +346,32 @@ static void* __attribute__ ((const)) get_addr_of_helper_func(int opcode, int opa
         JIT_HELPER_ADDR(LOAD_NAME);
         JIT_HELPER_ADDR(LOAD_CLASSDEREF);
         JIT_HELPER_ADDR(BUILD_STRING);
-        JIT_HELPER_ADDR(BUILD_TUPLE_UNPACK_WITH_CALL);
-        JIT_HELPER_ADDR(BUILD_TUPLE_UNPACK);
-        JIT_HELPER_ADDR(BUILD_LIST_UNPACK);
         JIT_HELPER_ADDR(BUILD_SET);
-        JIT_HELPER_ADDR(BUILD_SET_UNPACK);
         JIT_HELPER_ADDR(BUILD_MAP);
         JIT_HELPER_ADDR(SETUP_ANNOTATIONS);
         JIT_HELPER_ADDR(BUILD_CONST_KEY_MAP);
-        JIT_HELPER_ADDR(BUILD_MAP_UNPACK);
-        JIT_HELPER_ADDR(BUILD_MAP_UNPACK_WITH_CALL);
         JIT_HELPER_ADDR(IMPORT_STAR);
         JIT_HELPER_ADDR(GET_YIELD_FROM_ITER);
         JIT_HELPER_ADDR(BEFORE_ASYNC_WITH);
         JIT_HELPER_ADDR(SETUP_WITH);
-        JIT_HELPER_ADDR(WITH_CLEANUP_START);
-        JIT_HELPER_ADDR(WITH_CLEANUP_FINISH);
         JIT_HELPER_ADDR(MAKE_FUNCTION);
         JIT_HELPER_ADDR(FORMAT_VALUE);
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
+        JIT_HELPER_ADDR(POP_FINALLY);
+        JIT_HELPER_ADDR(BUILD_LIST_UNPACK);
+        JIT_HELPER_ADDR(BUILD_MAP_UNPACK);
+        JIT_HELPER_ADDR(BUILD_MAP_UNPACK_WITH_CALL);
+        JIT_HELPER_ADDR(BUILD_SET_UNPACK);
+        JIT_HELPER_ADDR(BUILD_TUPLE_UNPACK_WITH_CALL);
+        JIT_HELPER_ADDR(BUILD_TUPLE_UNPACK);
+        JIT_HELPER_ADDR(WITH_CLEANUP_START);
+        JIT_HELPER_ADDR(WITH_CLEANUP_FINISH);
+#endif
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 8
+        JIT_HELPER_ADDR(END_ASYNC_FOR);
+#endif
 
         case UNPACK_SEQUENCE:
             if (oparg == 2) return JIT_HELPER_UNPACK_SEQUENCE2;
@@ -455,6 +459,7 @@ static void* __attribute__ ((const)) get_addr_of_aot_func(int opcode, int oparg,
         OPCODE_STATIC(LOAD_METHOD, JIT_HELPER_LOAD_METHOD);
     }
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
     if (opcode == COMPARE_OP) {
 #ifndef PYSTON_LITE
         if (jit_use_aot) {
@@ -491,6 +496,7 @@ static void* __attribute__ ((const)) get_addr_of_aot_func(int opcode, int oparg,
             abort();
         }
     }
+#endif
 #undef OPCODE_STATIC
 #undef OPCODE_PROFILE
     printf("could not find aot func for opcode: %d oparg: %d\n", opcode, oparg);
@@ -549,14 +555,11 @@ static const char* get_opcode_name(int opcode) {
         OPCODE_NAME(INPLACE_AND);
         OPCODE_NAME(INPLACE_XOR);
         OPCODE_NAME(INPLACE_OR);
-        OPCODE_NAME(WITH_CLEANUP_START);
-        OPCODE_NAME(WITH_CLEANUP_FINISH);
         OPCODE_NAME(RETURN_VALUE);
         OPCODE_NAME(IMPORT_STAR);
         OPCODE_NAME(SETUP_ANNOTATIONS);
         OPCODE_NAME(YIELD_VALUE);
         OPCODE_NAME(POP_BLOCK);
-        OPCODE_NAME(END_FINALLY);
         OPCODE_NAME(POP_EXCEPT);
         OPCODE_NAME(STORE_NAME);
         OPCODE_NAME(DELETE_NAME);
@@ -604,16 +607,11 @@ static const char* get_opcode_name(int opcode) {
         OPCODE_NAME(SET_ADD);
         OPCODE_NAME(MAP_ADD);
         OPCODE_NAME(LOAD_CLASSDEREF);
-        OPCODE_NAME(BUILD_LIST_UNPACK);
-        OPCODE_NAME(BUILD_MAP_UNPACK);
-        OPCODE_NAME(BUILD_MAP_UNPACK_WITH_CALL);
-        OPCODE_NAME(BUILD_TUPLE_UNPACK);
-        OPCODE_NAME(BUILD_SET_UNPACK);
         OPCODE_NAME(SETUP_ASYNC_WITH);
         OPCODE_NAME(FORMAT_VALUE);
         OPCODE_NAME(BUILD_CONST_KEY_MAP);
         OPCODE_NAME(BUILD_STRING);
-        OPCODE_NAME(BUILD_TUPLE_UNPACK_WITH_CALL);
+
         OPCODE_NAME(LOAD_METHOD);
         OPCODE_NAME(CALL_METHOD);
 
@@ -622,13 +620,30 @@ static const char* get_opcode_name(int opcode) {
         OPCODE_NAME(BREAK_LOOP);
 #endif
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
+    OPCODE_NAME(BEGIN_FINALLY);
+    OPCODE_NAME(CALL_FINALLY);
+    OPCODE_NAME(POP_FINALLY);
+#endif
+
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 8
         OPCODE_NAME(ROT_FOUR);
-        OPCODE_NAME(BEGIN_FINALLY);
         OPCODE_NAME(END_ASYNC_FOR);
-        OPCODE_NAME(CALL_FINALLY);
-        OPCODE_NAME(POP_FINALLY);
 #endif
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
+        OPCODE_NAME(WITH_CLEANUP_START);
+        OPCODE_NAME(WITH_CLEANUP_FINISH);
+        OPCODE_NAME(END_FINALLY);
+        OPCODE_NAME(BUILD_LIST_UNPACK);
+        OPCODE_NAME(BUILD_MAP_UNPACK);
+        OPCODE_NAME(BUILD_MAP_UNPACK_WITH_CALL);
+        OPCODE_NAME(BUILD_TUPLE_UNPACK);
+        OPCODE_NAME(BUILD_TUPLE_UNPACK_WITH_CALL);
+        OPCODE_NAME(BUILD_SET_UNPACK);
+#endif
+
+
     };
 #undef OPCODE_NAME
     return "UNKNOWN";
@@ -688,7 +703,7 @@ static char* calculate_jmp_targets(Jit* Dst) {
                 is_jmp_target[oparg/2 + inst_idx + 1] = 1;
                 break;
 
-#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 8
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
             case CALL_FINALLY:
                 is_jmp_target[inst_idx + 1] = 1;
                 is_jmp_target[oparg/2 + inst_idx + 1] = 1;
@@ -2302,12 +2317,18 @@ static int emit_special_store_subscr(Jit* Dst, int inst_idx, int opcode, int opa
 
 // returns 0 if generation succeeded
 static int emit_special_compare_op(Jit* Dst, int oparg, RefStatus ref_status[2]) {
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
     if (oparg != PyCmp_IS && oparg != PyCmp_IS_NOT) {
         return -1;
     }
+    int is_cmp = oparg == PyCmp_IS;
+#else
+    return -1;
+    int is_cmp = oparg & 1;
+#endif
     emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
     | cmp arg1, arg2
-    if (oparg == PyCmp_IS) {
+    if (is_cmp) {
 @ARM    | csel res, res, tmp, eq
 @X86    | cmovne res, tmp
     } else {
@@ -3320,8 +3341,13 @@ static void emit_instr_start(Jit* Dst, int inst_idx, int opcode, int oparg) {
 
     default:
     {
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
         _Static_assert(offsetof(struct _ceval_runtime_state, tracing_possible) == 4, "cmp need to be modified");
         _Static_assert(offsetof(struct _ceval_runtime_state, eval_breaker) == 8, "cmp need to be modified");
+#else
+        _Static_assert(offsetof(PyInterpreterState, ceval.tracing_possible) == 68, "cmp need to be modified");
+        _Static_assert(offsetof(PyInterpreterState, ceval.eval_breaker) == 68+4, "cmp need to be modified");
+#endif
         // compares ceval->tracing_possible == 0 and eval_breaker == 0 in one (64bit)
         emit_tracing_possible_and_eval_breaker_check(Dst);
 
@@ -4053,7 +4079,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             break;
         }
 
-#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 8
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
         case CALL_FINALLY:
             deferred_vs_apply(Dst);
             // todo: handle during bytecode generation,
@@ -4066,6 +4092,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             break;
 #endif
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
         case END_FINALLY:
         {
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7
@@ -4114,6 +4141,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #endif
             break;
         }
+#endif
 
         case SET_ADD:
         case LIST_APPEND:
@@ -4361,7 +4389,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #endif
             break;
 
-#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 8
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
         case BEGIN_FINALLY:
             /* Push NULL onto the stack for using it in END_FINALLY,
             POP_FINALLY, WITH_CLEANUP_START and WITH_CLEANUP_FINISH.
@@ -4455,7 +4483,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
                 // ### TWO PYTHON ARGS ###
                 // JIT_HELPER2
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
                 case WITH_CLEANUP_FINISH:
+#endif
                 case MAKE_FUNCTION:
                 // JIT_HELPER_WITH_NAME_OPCACHE_AOT2
                 case STORE_ATTR:
@@ -4523,26 +4553,31 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
                 // *_WITH_OPARG:
                 case RAISE_VARARGS:
-#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 8
-                case POP_FINALLY:
-#endif
                 case UNPACK_SEQUENCE:
                 case UNPACK_EX:
                 case LOAD_CLASSDEREF:
                 case BUILD_STRING:
-                case BUILD_TUPLE_UNPACK_WITH_CALL:
-                case BUILD_TUPLE_UNPACK:
-                case BUILD_LIST_UNPACK:
                 case BUILD_SET:
-                case BUILD_SET_UNPACK:
                 case BUILD_MAP:
                 case BUILD_CONST_KEY_MAP:
-                case BUILD_MAP_UNPACK:
-                case BUILD_MAP_UNPACK_WITH_CALL:
                 case SETUP_WITH:
                 case CALL_FUNCTION_EX:
                 case MAKE_FUNCTION:
                 case FORMAT_VALUE:
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
+                case POP_FINALLY:
+#endif
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
+                case BUILD_TUPLE_UNPACK_WITH_CALL:
+                case BUILD_TUPLE_UNPACK:
+                case BUILD_LIST_UNPACK:
+                case BUILD_SET_UNPACK:
+                case BUILD_MAP_UNPACK:
+                case BUILD_MAP_UNPACK_WITH_CALL:
+#endif
+
                     emit_mov_imm(Dst, arg1_idx, oparg);
                     break;
 
@@ -4630,24 +4665,28 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 case LOAD_GLOBAL:
                 case LOAD_CLASSDEREF:
                 case BUILD_STRING:
-                case BUILD_TUPLE_UNPACK_WITH_CALL:
-                case BUILD_TUPLE_UNPACK:
-                case BUILD_LIST_UNPACK:
                 case BUILD_SET:
-                case BUILD_SET_UNPACK:
                 case BUILD_MAP:
                 case BUILD_CONST_KEY_MAP:
-                case BUILD_MAP_UNPACK:
-                case BUILD_MAP_UNPACK_WITH_CALL:
                 case LOAD_ATTR:
                 case GET_YIELD_FROM_ITER:
                 case BEFORE_ASYNC_WITH:
                 case SETUP_WITH:
-                case WITH_CLEANUP_START:
                 case LOAD_METHOD:
                 case CALL_FUNCTION_EX:
                 case MAKE_FUNCTION:
                 case FORMAT_VALUE:
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
+                case BUILD_TUPLE_UNPACK_WITH_CALL:
+                case BUILD_TUPLE_UNPACK:
+                case BUILD_LIST_UNPACK:
+                case BUILD_SET_UNPACK:
+                case BUILD_MAP_UNPACK:
+                case BUILD_MAP_UNPACK_WITH_CALL:
+                case WITH_CLEANUP_START:
+#endif
+
                     // res == 0 means error
                     // all other values are the returned python object
                     emit_if_res_0_error(Dst);
@@ -4850,12 +4889,22 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     // (using the address as immediate instead of the reg would require 8/9bytes)
     // and this adds up because we emit it infront of every opcode.
     // The offsets of the fields are not important as long as the two fields are next to each other and fit in 8bytes -> assert is overly strict
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
     _Static_assert(offsetof(struct _ceval_runtime_state, tracing_possible) == 4, "");
     _Static_assert(offsetof(struct _ceval_runtime_state, eval_breaker) == 8, "");
     _Static_assert(sizeof(((struct _ceval_runtime_state*)0)->tracing_possible) == 4, "");
     _Static_assert(sizeof(((struct _ceval_runtime_state*)0)->eval_breaker) == 4, "");
 
     emit_mov_imm(Dst, interrupt_idx, (unsigned long)&_PyRuntime.ceval.tracing_possible);
+#else
+    _Static_assert(offsetof(PyInterpreterState, ceval.tracing_possible) == 68, "");
+    _Static_assert(offsetof(PyInterpreterState, ceval.eval_breaker) == 68+4, "");
+    _Static_assert(sizeof(((struct _ceval_state*)0)->tracing_possible) == 4, "");
+    _Static_assert(sizeof(((struct _ceval_state*)0)->eval_breaker) == 4, "");
+
+    // TODO: we directly embed the address of the interpreter struct maybe we should fetch it at runtime?
+    emit_mov_imm(Dst, interrupt_idx, (unsigned long)&tstate->interp->ceval.tracing_possible);
+#endif
 
     // clear deferred stack space (skip manual stack slots because they don't need to be zero)
     // we clear it so in case of error we can just decref this space

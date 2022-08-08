@@ -26,10 +26,15 @@ _Py_Dealloc(PyObject *op)
 #endif
     (*dealloc)(op);
 }
-
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
 PyObject* _Py_CheckFunctionResult(PyObject *callable, PyObject *result, const char *where) {
     return result;
 }
+#else
+PyObject* _Py_CheckFunctionResult(PyThreadState *tstate, PyObject *callable, PyObject *result, const char *where) {
+    return result;
+}
+#endif
 
 PyObject * _Py_HOT_FUNCTION
 call_function_ceval_no_kw(PyThreadState *tstate, PyObject **stack, Py_ssize_t oparg);
