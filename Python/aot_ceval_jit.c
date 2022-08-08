@@ -3375,6 +3375,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #endif
     if (mem_bytes_used_max <= mem_bytes_used) // stop emitting code we used up all memory
         return NULL;
+    return 0;
 
     int success = 0;
 
