@@ -108,7 +108,7 @@ static PyObject * unicode_concatenate(PyThreadState *, PyObject *, PyObject *,
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
 /*static*/ void format_awaitable_error(PyThreadState *, PyTypeObject *, int);
 #else
-void format_awaitable_error(PyThreadState *, PyTypeObject *, int, int)
+void format_awaitable_error(PyThreadState *, PyTypeObject *, int, int);
 #endif
 
 #define NAME_ERROR_MSG \
@@ -486,6 +486,8 @@ UNSIGNAL_ASYNC_EXC(PyInterpreterState *interp)
 #include "ceval_gil37.h"
 #define drop_gil(ceval, tstate) drop_gil(tstate)
 #define take_gil(ceval, tstate) take_gil(tstate)
+#elif PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 9
+#include "ceval_gil39.h"
 #else
 #include "../../Python/ceval_gil.h"
 #endif
@@ -1227,6 +1229,12 @@ int eval_breaker_jit_helper() {
     struct _ceval_runtime_state * const ceval = &runtime->ceval;
 #endif
 
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+    if (eval_frame_handle_pending(tstate) != 0) {
+        return -1;
+    }
+#else
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7
     if (_Py_atomic_load_relaxed(&_PyRuntime.ceval.pending.calls_to_do)) {
         if (Py_MakePendingCalls() < 0)
@@ -1276,6 +1284,7 @@ int eval_breaker_jit_helper() {
         Py_DECREF(exc);
         return -1;
     }
+#endif
     return 0;
 }
 
@@ -2177,6 +2186,8 @@ _PyEval_EvalFrame_AOT_Interpreter(PyFrameObject *f, int throwflag, PyThreadState
 #ifdef PYSTON_LITE
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7
 #include "opcode_targets37.h"
+#elif PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 9
+#include "opcode_targets39.h"
 #else
 #include "../../Python/opcode_targets.h"
 #endif
