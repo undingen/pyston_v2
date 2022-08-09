@@ -5271,9 +5271,11 @@ void jit_start() {
 
 #ifdef PYSTON_LITE
     // This is to get the value of lookdict_split, which is a static function:
-    PyDictKeysObject* tmp_keys = _PyDict_NewKeysForClass();
-    lookdict_split_value = tmp_keys->dk_lookup;
-    // Unfortunately I can't find an easy way to deallocate this temporary object.
+    PyDictObject* tmp_dict = (PyDictObject*)PyDict_New();
+    assert(_PyDict_HasSplitTable(tmp_dict));
+    if (!_PyDict_HasSplitTable(tmp_dict)) abort();
+    lookdict_split_value = tmp_dict->ma_keys->dk_lookup;
+    Py_DECREF(tmp_dict);
 
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 8
     // To get the values of these functions we have to find methods that use them, and then fish the value out:

@@ -383,7 +383,7 @@ _PyVectorcall_FunctionFunction(PyObject *callable)
 }
 
 static inline PyObject *
-_PyObject_VectorcallFunction(PyObject *callable, PyObject *const *args,
+_PyObject_VectorcallFunction(PyThreadState *tstate, PyObject *callable, PyObject *const *args,
                      size_t nargsf, PyObject *kwnames)
 {
     PyObject *res;
@@ -393,10 +393,18 @@ _PyObject_VectorcallFunction(PyObject *callable, PyObject *const *args,
     func = _PyVectorcall_FunctionFunction(callable);
     if (func == NULL) {
         Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
         return _PyObject_MakeTpCall(callable, args, nargs, kwnames);
+#else
+        return _PyObject_MakeTpCall(tstate, callable, args, nargs, kwnames);
+#endif
     }
     res = func(callable, args, nargsf, kwnames);
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
     return _Py_CheckFunctionResult(callable, res, NULL);
+#else
+    return _Py_CheckFunctionResult(tstate, callable, res, NULL);
+#endif
 }
 #endif
 
@@ -428,7 +436,7 @@ call_functionFunction(PyThreadState *tstate, PyObject ** restrict pp_stack, Py_s
         x = trace_call_function(tstate, func, stack, nargs, kwnames);
     }
     else {
-        x = _PyObject_VectorcallFunction(func, stack, nargs | PY_VECTORCALL_ARGUMENTS_OFFSET, kwnames);
+        x = _PyObject_VectorcallFunction(tstate, func, stack, nargs | PY_VECTORCALL_ARGUMENTS_OFFSET, kwnames);
     }
 #endif
 

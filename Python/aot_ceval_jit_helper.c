@@ -159,10 +159,12 @@ register PyThreadState* tstate asm("r15");
     "free variable '%.200s' referenced before assignment" \
     " in enclosing scope"
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
 // this one is special it needs to access tstate thats why it's defined here
 PyObject* cmp_outcomePyCmp_EXC_MATCH(PyObject *v, PyObject *w) {
   return cmp_outcome(tstate, PyCmp_EXC_MATCH, v, w);
 }
+#endif
 
 int storeAttrCache(PyObject* owner, PyObject* name, PyObject* v, _PyOpcache *co_opcache, int* err);
 int setupStoreAttrCache(PyObject* owner, PyObject* name, _PyOpcache *co_opcache);
@@ -942,6 +944,7 @@ JIT_HELPER_WITH_OPARG(BUILD_STRING) {
     return str;
 }
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
 JIT_HELPER_WITH_OPARG(BUILD_TUPLE_UNPACK_WITH_CALL) {
     int opcode = BUILD_TUPLE_UNPACK_WITH_CALL;
     int convert_to_tuple = opcode != BUILD_LIST_UNPACK;
@@ -1070,6 +1073,7 @@ JIT_HELPER_WITH_OPARG(BUILD_LIST_UNPACK) {
     //DISPATCH();
     return return_value;
 }
+#endif
 
 JIT_HELPER_WITH_OPARG(BUILD_SET) {
     PyObject *set = PySet_New(NULL);
@@ -1093,6 +1097,7 @@ JIT_HELPER_WITH_OPARG(BUILD_SET) {
     return set;
 }
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
 JIT_HELPER_WITH_OPARG(BUILD_SET_UNPACK) {
     Py_ssize_t i;
     PyObject *sum = PySet_New(NULL);
@@ -1112,6 +1117,7 @@ JIT_HELPER_WITH_OPARG(BUILD_SET_UNPACK) {
     //DISPATCH();
     return sum;
 }
+#endif
 
 JIT_HELPER_WITH_OPARG(BUILD_MAP) {
     Py_ssize_t i;
