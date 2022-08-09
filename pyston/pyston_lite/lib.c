@@ -538,20 +538,22 @@ call_unbound(int unbound, PyObject *func, PyObject *self,
 {
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
     if (unbound) {
-/*
-#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
         return _PyObject_FastCall_Prepend(func, self, args, nargs);
-#else
-        PyThreadState *tstate = _PyThreadState_GET();
-        return _PyObject_Call_Prepend(tstate, func, self, args, nargs);
-#endif
-*/
     }
-    else
-#endif
-    {
+    else {
         return _PyObject_FastCall(func, args, nargs);
     }
+#else
+    PyThreadState *tstate = _PyThreadState_GET();
+    size_t nargsf = nargs;
+    if (!unbound) {
+        /* Skip self argument, freeing up args[0] to use for
+         * PY_VECTORCALL_ARGUMENTS_OFFSET */
+        args++;
+        nargsf = nargsf - 1 + PY_VECTORCALL_ARGUMENTS_OFFSET;
+    }
+    return _PyObject_VectorcallTstate(tstate, func, args, nargsf, NULL);
+#endif
 }
 
 static PyObject*
