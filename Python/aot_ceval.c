@@ -5173,6 +5173,8 @@ la_common:
                 Py_DECREF(enter);
                 goto error;
             }
+            SET_TOP(exit);
+            Py_DECREF(mgr);
 #endif
             res = _PyObject_CallNoArg(enter);
             Py_DECREF(enter);
