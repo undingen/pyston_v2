@@ -833,5 +833,27 @@ monotonic_abs_timeout(long long us, struct timespec *abs)
 void _PyThread_cond_after(long long us, struct timespec *abs) {
     monotonic_abs_timeout(us, abs);
 }
+PyObject *
+_PyTuple_FromArray(PyObject *const *src, Py_ssize_t n)
+{
+    if (n == 0) {
+        return PyTuple_New(0);
+    }
 
+    //Pyston change: can't access tuple_alloc use PyTuple_New
+    //PyTupleObject *tuple = tuple_alloc(n);
+    PyTupleObject *tuple = (PyTupleObject*)PyTuple_New(n);
+    if (tuple == NULL) {
+        return NULL;
+    }
+    PyObject **dst = tuple->ob_item;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *item = src[i];
+        Py_INCREF(item);
+        dst[i] = item;
+    }
+    //Pyston change: PyTuple_New already calls it
+    //tuple_gc_track(tuple);
+    return (PyObject *)tuple;
+}
 #endif

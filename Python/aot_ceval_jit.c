@@ -71,7 +71,7 @@
 #endif
 
 // enable runtime checks to catch jit compiler bugs
-//#define JIT_DEBUG 1
+#define JIT_DEBUG 1
 
 #if JIT_DEBUG
 #define DASM_CHECKS 1
@@ -641,6 +641,14 @@ static const char* get_opcode_name(int opcode) {
         OPCODE_NAME(BUILD_TUPLE_UNPACK);
         OPCODE_NAME(BUILD_TUPLE_UNPACK_WITH_CALL);
         OPCODE_NAME(BUILD_SET_UNPACK);
+#endif
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+        OPCODE_NAME(CONTAINS_OP);
+        OPCODE_NAME(IS_OP);
+        OPCODE_NAME(JUMP_IF_NOT_EXC_MATCH);
+        OPCODE_NAME(LOAD_ASSERTION_ERROR);
+        OPCODE_NAME(WITH_EXCEPT_START);
 #endif
 
 
@@ -1379,6 +1387,12 @@ static void emit_if_res_32b_not_0_error(Jit* Dst) {
     JIT_ASSERT(Dst->deferred_vs_res_used == 0, "error this would not get decrefed");
     emit_cmp32_imm(Dst, res_idx, 0);
     | branch_ne ->error
+}
+
+static void emit_if_res_32b_below_0_error(Jit* Dst) {
+    JIT_ASSERT(Dst->deferred_vs_res_used == 0, "error this would not get decrefed");
+    emit_cmp32_imm(Dst, res_idx, 0);
+    | branch_lt ->error
 }
 
 static void emit_jump_by_n_bytecodes(Jit* Dst, int num_bytes, int inst_idx) {
@@ -2196,6 +2210,41 @@ static void emit_exit_yielding_label(Jit* Dst) {
     | branch ->return
 }
 
+// checks converts res32 to a Python boolean
+// res32:
+//   < 0: goto error
+//     0: set res = invert ? Py_True : Py_False
+//  else: set res = invert ? Py_False : Py_True
+static void emit_convert_res32_to_pybool(Jit* Dst, int invert) {
+@ARM_START
+    emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
+    emit_cmp32_imm(Dst, res_idx, 0); // 32bit comparison!
+    | branch_lt ->error // < 0, means error
+    if (invert) {
+        | csel res, arg3, arg4, ne
+    } else {
+        | csel res, arg3, arg4, eq
+    }
+@ARM_END
+
+@X86_START
+    | mov Rd(arg1_idx), Rd(res_idx) // save result for comparison
+    emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
+    emit_cmp32_imm(Dst, arg1_idx, 0); // 32bit comparison!
+    | branch_lt ->error // < 0, means error
+    if (invert) {
+        | cmovne Rq(res_idx), Rq(tmp_idx)
+    } else {
+        | cmoveq Rq(res_idx), Rq(tmp_idx)
+    }
+@X86_END
+
+    if (!IS_IMMORTAL(Py_True)) {
+        emit_incref(Dst, res_idx);
+    }
+}
+
+
 static _PyOpcache* get_opcache_entry(OpCache* opcache, int inst_idx) {
     _PyOpcache* co_opcache = NULL;
     if (opcache->oc_opcache != NULL) {
@@ -2323,8 +2372,8 @@ static int emit_special_compare_op(Jit* Dst, int oparg, RefStatus ref_status[2])
     }
     int is_cmp = oparg == PyCmp_IS;
 #else
-    return -1;
-    int is_cmp = oparg & 1;
+    // for 3.9 we only call this function from IS_OP which means this but be a IS or IS_NOT comparison.
+    int is_cmp = oparg == 0;
 #endif
     emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
     | cmp arg1, arg2
@@ -3401,7 +3450,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #endif
     if (mem_bytes_used_max <= mem_bytes_used) // stop emitting code we used up all memory
         return NULL;
-    return 0;
 
     int success = 0;
 
@@ -4021,18 +4069,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             void* func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
             emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
             if (opcode == UNARY_NOT) {
-@ARM            emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
-@ARM            emit_cmp32_imm(Dst, res_idx, 0); // 32bit comparison!
-@ARM            | branch_lt ->error // < 0, means error
-@ARM            | csel res, arg3, arg4, eq
-
-@X86            | mov Rd(arg1_idx), Rd(res_idx) // save result for comparison
-@X86            emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
-@X86            emit_cmp32_imm(Dst, arg1_idx, 0); // 32bit comparison!
-@X86            | branch_lt ->error // < 0, means error
-@X86            | cmovne Rq(res_idx), Rq(tmp_idx)
-
-                // don't need to incref Py_True/Py_False are immortals
+                emit_convert_res32_to_pybool(Dst, 0/*=don't invert*/);
             } else {
                 emit_if_res_0_error(Dst);
             }
@@ -4440,6 +4477,77 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             exception_unwind_label_used = 1;
             | branch ->exception_unwind
             break;
+#endif
+
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+        case LOAD_ASSERTION_ERROR:
+            deferred_vs_push(Dst, CONST, (unsigned long)PyExc_AssertionError);
+            break;
+
+        case IS_OP: {
+            RefStatus ref_status[2];
+            deferred_vs_pop2(Dst, arg2_idx, arg1_idx, ref_status);
+            deferred_vs_convert_reg_to_stack(Dst);
+            int ret = emit_special_compare_op(Dst, oparg, ref_status);
+            JIT_ASSERT(ret == 0, "");
+            break;
+        }
+
+        case CONTAINS_OP: {
+            RefStatus ref_status[2];
+            deferred_vs_pop2(Dst, arg2_idx, arg1_idx, ref_status);
+            deferred_vs_convert_reg_to_stack(Dst);
+            emit_call_decref_args2(Dst, PySequence_Contains, arg1_idx, arg2_idx, ref_status);
+            emit_convert_res32_to_pybool(Dst, oparg ? 1 : 0 /*=invert*/);
+            deferred_vs_push(Dst, REGISTER, res_idx);
+            break;
+        }
+
+#define CANNOT_CATCH_MSG "catching classes that do not inherit from "\
+                         "BaseException is not allowed"
+
+        case TARGET(JUMP_IF_NOT_EXC_MATCH): {
+            PyObject *right = POP();
+            PyObject *left = POP();
+            if (PyTuple_Check(right)) {
+                Py_ssize_t i, length;
+                length = PyTuple_GET_SIZE(right);
+                for (i = 0; i < length; i++) {
+                    PyObject *exc = PyTuple_GET_ITEM(right, i);
+                    if (!PyExceptionClass_Check(exc)) {
+                        _PyErr_SetString(tstate, PyExc_TypeError,
+                                        CANNOT_CATCH_MSG);
+                        Py_DECREF(left);
+                        Py_DECREF(right);
+                        goto error;
+                    }
+                }
+            }
+            else {
+                if (!PyExceptionClass_Check(right)) {
+                    _PyErr_SetString(tstate, PyExc_TypeError,
+                                    CANNOT_CATCH_MSG);
+                    Py_DECREF(left);
+                    Py_DECREF(right);
+                    goto error;
+                }
+            }
+            int res = PyErr_GivenExceptionMatches(left, right);
+            Py_DECREF(left);
+            Py_DECREF(right);
+            if (res > 0) {
+                /* Exception matches -- Do nothing */;
+            }
+            else if (res == 0) {
+                JUMPTO(oparg);
+            }
+            else {
+                goto error;
+            }
+            DISPATCH();
+        }
+
 #endif
 
         default:
