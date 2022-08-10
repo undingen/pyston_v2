@@ -270,8 +270,8 @@ static int jit_use_aot = 1, jit_use_ics = 1;
 static PyObject* cmp_outcomePyCmp_BAD(PyObject *v, PyObject *w) {
   return cmp_outcome(NULL, PyCmp_BAD, v, w);
 }
-PyObject* cmp_outcomePyCmp_EXC_MATCH(PyObject *v, PyObject *w);
 #endif
+PyObject* cmp_outcomePyCmp_EXC_MATCH(PyObject *v, PyObject *w);
 
 int eval_breaker_jit_helper();
 PyObject* loadAttrCacheAttrNotFound(PyObject *owner, PyObject *name);
@@ -2235,7 +2235,7 @@ static void emit_convert_res32_to_pybool(Jit* Dst, int invert) {
     if (invert) {
         | cmovne Rq(res_idx), Rq(tmp_idx)
     } else {
-        | cmoveq Rq(res_idx), Rq(tmp_idx)
+        | cmove Rq(res_idx), Rq(tmp_idx)
     }
 @X86_END
 
@@ -3768,7 +3768,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case INPLACE_OR:
         case INPLACE_POWER:
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
         case COMPARE_OP:
+#endif
 
         case BINARY_SUBSCR:
         {
@@ -4485,69 +4487,32 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_push(Dst, CONST, (unsigned long)PyExc_AssertionError);
             break;
 
+        case COMPARE_OP:
+        case CONTAINS_OP:
+        case JUMP_IF_NOT_EXC_MATCH:
         case IS_OP: {
             RefStatus ref_status[2];
             deferred_vs_pop2(Dst, arg2_idx, arg1_idx, ref_status);
             deferred_vs_convert_reg_to_stack(Dst);
-            int ret = emit_special_compare_op(Dst, oparg, ref_status);
-            JIT_ASSERT(ret == 0, "");
-            break;
-        }
-
-        case CONTAINS_OP: {
-            RefStatus ref_status[2];
-            deferred_vs_pop2(Dst, arg2_idx, arg1_idx, ref_status);
-            deferred_vs_convert_reg_to_stack(Dst);
-            emit_call_decref_args2(Dst, PySequence_Contains, arg1_idx, arg2_idx, ref_status);
-            emit_convert_res32_to_pybool(Dst, oparg ? 1 : 0 /*=invert*/);
+            if (opcode == COMPARE_OP) {
+                emit_mov_imm(Dst, arg3_idx, oparg);
+                emit_call_decref_args2(Dst, PyObject_RichCompare, arg1_idx, arg2_idx, ref_status);
+                emit_if_res_0_error(Dst);
+            } else if (opcode == CONTAINS_OP) {
+                emit_call_decref_args2(Dst, PySequence_Contains, arg1_idx, arg2_idx, ref_status);
+                emit_convert_res32_to_pybool(Dst, oparg ? 1 : 0 /*=invert*/);
+            } else if (opcode == JUMP_IF_NOT_EXC_MATCH) {
+                emit_call_decref_args2(Dst, cmp_outcomePyCmp_EXC_MATCH, arg1_idx, arg2_idx, ref_status);
+                emit_if_res_0_error(Dst);
+            } else if (opcode == IS_OP) {
+                int ret = emit_special_compare_op(Dst, oparg, ref_status);
+                JIT_ASSERT(ret == 0, "");
+            } else {
+                JIT_ASSERT(0, "unhandled");
+            }
             deferred_vs_push(Dst, REGISTER, res_idx);
             break;
         }
-
-#define CANNOT_CATCH_MSG "catching classes that do not inherit from "\
-                         "BaseException is not allowed"
-
-        case TARGET(JUMP_IF_NOT_EXC_MATCH): {
-            PyObject *right = POP();
-            PyObject *left = POP();
-            if (PyTuple_Check(right)) {
-                Py_ssize_t i, length;
-                length = PyTuple_GET_SIZE(right);
-                for (i = 0; i < length; i++) {
-                    PyObject *exc = PyTuple_GET_ITEM(right, i);
-                    if (!PyExceptionClass_Check(exc)) {
-                        _PyErr_SetString(tstate, PyExc_TypeError,
-                                        CANNOT_CATCH_MSG);
-                        Py_DECREF(left);
-                        Py_DECREF(right);
-                        goto error;
-                    }
-                }
-            }
-            else {
-                if (!PyExceptionClass_Check(right)) {
-                    _PyErr_SetString(tstate, PyExc_TypeError,
-                                    CANNOT_CATCH_MSG);
-                    Py_DECREF(left);
-                    Py_DECREF(right);
-                    goto error;
-                }
-            }
-            int res = PyErr_GivenExceptionMatches(left, right);
-            Py_DECREF(left);
-            Py_DECREF(right);
-            if (res > 0) {
-                /* Exception matches -- Do nothing */;
-            }
-            else if (res == 0) {
-                JUMPTO(oparg);
-            }
-            else {
-                goto error;
-            }
-            DISPATCH();
-        }
-
 #endif
 
         default:
