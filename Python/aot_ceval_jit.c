@@ -373,6 +373,10 @@ static void* __attribute__ ((const)) get_addr_of_helper_func(int opcode, int opa
         JIT_HELPER_ADDR(END_ASYNC_FOR);
 #endif
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+        JIT_HELPER_ADDR(WITH_EXCEPT_START);
+#endif
+
         case UNPACK_SEQUENCE:
             if (oparg == 2) return JIT_HELPER_UNPACK_SEQUENCE2;
             if (oparg == 3) return JIT_HELPER_UNPACK_SEQUENCE3;
@@ -4812,6 +4816,10 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 case BUILD_MAP_UNPACK:
                 case BUILD_MAP_UNPACK_WITH_CALL:
                 case WITH_CLEANUP_START:
+#endif
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+                case WITH_EXCEPT_START:
 #endif
 
                     // res == 0 means error

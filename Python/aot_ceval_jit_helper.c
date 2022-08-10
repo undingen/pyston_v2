@@ -1410,6 +1410,32 @@ JIT_HELPER1(LIST_EXTEND_ERROR, iterable) {
     Py_DECREF(iterable);
     goto_error;
 }
+JIT_HELPER(WITH_EXCEPT_START) {
+    /* At the top of the stack are 7 values:
+        - (TOP, SECOND, THIRD) = exc_info()
+        - (FOURTH, FIFTH, SIXTH) = previous exception for EXCEPT_HANDLER
+        - SEVENTH: the context.__exit__ bound method
+        We call SEVENTH(TOP, SECOND, THIRD).
+        Then we push again the TOP exception and the __exit__
+        return value.
+    */
+    PyObject *exit_func;
+    PyObject *exc, *val, *tb, *res;
+
+    exc = TOP();
+    val = SECOND();
+    tb = THIRD();
+    assert(exc != Py_None);
+    assert(!PyLong_Check(exc));
+    exit_func = PEEK(7);
+    PyObject *stack[4] = {NULL, exc, val, tb};
+    res = PyObject_Vectorcall(exit_func, stack + 1,
+            3 | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
+    if (res == NULL)
+        goto_error;
+
+    return res;
+}
 #endif
 
 JIT_HELPER(BEFORE_ASYNC_WITH) {
