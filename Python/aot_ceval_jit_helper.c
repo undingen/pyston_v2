@@ -1397,6 +1397,21 @@ JIT_HELPER(FOR_ITER_SECOND_PART) {
     DISPATCH();
 }
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+JIT_HELPER1(LIST_EXTEND_ERROR, iterable) {
+    if (_PyErr_ExceptionMatches(tstate, PyExc_TypeError) &&
+        (Py_TYPE(iterable)->tp_iter == NULL && !PySequence_Check(iterable)))
+    {
+        _PyErr_Clear(tstate);
+        _PyErr_Format(tstate, PyExc_TypeError,
+                "Value after * must be an iterable, not %.200s",
+                Py_TYPE(iterable)->tp_name);
+    }
+    Py_DECREF(iterable);
+    goto_error;
+}
+#endif
+
 JIT_HELPER(BEFORE_ASYNC_WITH) {
     _Py_IDENTIFIER(__aexit__);
     _Py_IDENTIFIER(__aenter__);

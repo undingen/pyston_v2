@@ -460,7 +460,7 @@ call_functionFunction(PyThreadState *tstate, PyObject ** restrict pp_stack, Py_s
 
 PyObject* call_function_ceval_no_kwProfile(PyThreadState * tstate, PyObject ** restrict stack, Py_ssize_t oparg) {
     PyObject* f = *(stack - oparg - 1);
-    if (f->ob_type == &PyFunction_Type) {
+    if (0 && f->ob_type == &PyFunction_Type) {
         SET_JIT_AOT_FUNC(call_functionFunction);
         return call_functionFunction(tstate, stack, oparg);
     }

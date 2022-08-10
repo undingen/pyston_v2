@@ -647,7 +647,11 @@ static const char* get_opcode_name(int opcode) {
         OPCODE_NAME(CONTAINS_OP);
         OPCODE_NAME(IS_OP);
         OPCODE_NAME(JUMP_IF_NOT_EXC_MATCH);
+        OPCODE_NAME(LIST_EXTEND);
+        OPCODE_NAME(LIST_TO_TUPLE);
         OPCODE_NAME(LOAD_ASSERTION_ERROR);
+        OPCODE_NAME(RERAISE);
+        OPCODE_NAME(SET_UPDATE);
         OPCODE_NAME(WITH_EXCEPT_START);
 #endif
 
@@ -4065,10 +4069,19 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case UNARY_NOT:
         case UNARY_INVERT:
         case GET_ITER:
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+        case LIST_TO_TUPLE:
+#endif
         {
             RefStatus ref_status = deferred_vs_pop1(Dst, arg1_idx);
             deferred_vs_convert_reg_to_stack(Dst);
-            void* func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
+            void* func = NULL;
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+            if (opcode == LIST_TO_TUPLE) {
+                func = PyList_AsTuple;
+            } else
+#endif
+            func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
             emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
             if (opcode == UNARY_NOT) {
                 emit_convert_res32_to_pybool(Dst, 0/*=don't invert*/);
@@ -4184,11 +4197,19 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
         case SET_ADD:
         case LIST_APPEND:
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+        case SET_UPDATE:
+#endif
         {
             RefStatus ref_status = deferred_vs_pop1(Dst, arg2_idx);
             deferred_vs_peek(Dst, arg1_idx, oparg);
             deferred_vs_convert_reg_to_stack(Dst);
             void* func = opcode == SET_ADD ? PySet_Add : PyList_Append;
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+            if (opcode == SET_UPDATE) {
+                func = _PySet_Update;
+            }
+#endif
             emit_call_decref_args1(Dst, func, arg2_idx, &ref_status);
             emit_if_res_32b_not_0_error(Dst);
             break;
@@ -4513,6 +4534,39 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             deferred_vs_push(Dst, REGISTER, res_idx);
             break;
         }
+
+        case LIST_EXTEND: {
+            RefStatus ref_status = deferred_vs_pop1(Dst, arg2_idx);
+            deferred_vs_peek(Dst, arg1_idx, oparg);
+            deferred_vs_convert_reg_to_stack(Dst);
+
+            | mov tmp_preserved_reg, arg2
+            emit_call_ext_func(Dst, _PyList_Extend);
+            emit_cmp32_imm(Dst, res_idx, 0);
+            | branch_ne >1
+
+            // error path:
+            | mov arg1, tmp_preserved_reg
+            emit_make_owned(Dst, arg1_idx, ref_status);
+            emit_call_ext_func(Dst, JIT_HELPER_LIST_EXTEND_ERROR);
+            | branch ->error
+
+            |1:
+            if (ref_status == OWNED) {
+                emit_decref(Dst, tmp_preserved_reg_idx, 1 /*= preserve res */);
+            }
+            emit_decref(Dst, res_idx, 0 /*= don't preserve res */);
+            break;
+        }
+
+        case RERAISE:
+            deferred_vs_pop3_owned(Dst, arg2_idx, arg3_idx, arg4_idx);
+            deferred_vs_apply(Dst);
+            | mov arg1, tstate
+            emit_call_ext_func(Dst, _PyErr_Restore);
+            exception_unwind_label_used = 1;
+            | branch ->exception_unwind
+            break;
 #endif
 
         default:

@@ -4451,7 +4451,9 @@ sa_common:
             PUSH(return_value);
             DISPATCH();
         }
-#else
+#endif
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
         case TARGET(LIST_TO_TUPLE): {
             PyObject *list = POP();
             PyObject *tuple = PyList_AsTuple(list);
