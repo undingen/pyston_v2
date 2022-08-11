@@ -6361,6 +6361,22 @@ exception_unwind:
             PUSH(exc);
 
             f->f_lasti = handler - 2;
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+#if 0
+            if (_Py_TracingPossible(ceval2)) {
+                int needs_new_execution_window = (f->f_lasti < instr_lb || f->f_lasti >= instr_ub);
+                int needs_line_update = (f->f_lasti == instr_lb || f->f_lasti < instr_prev);
+                /* Make sure that we trace line after exception if we are in a new execution
+                    * window or we don't need a line update and we are not in the first instruction
+                    * of the line. */
+                if (needs_new_execution_window || (!needs_line_update && instr_lb > 0)) {
+                    instr_prev = INT_MAX;
+                }
+            }
+#endif
+#endif
+
             /* Resume normal execution */
             goto continue_jit;
         }
