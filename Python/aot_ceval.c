@@ -7974,11 +7974,6 @@ cmp_outcome(PyThreadState *tstate, int op, PyObject *v, PyObject *w)
         res = !res;
         break;
     case PyCmp_EXC_MATCH:
-#else
-PyObject* cmp_outcomePyCmp_EXC_MATCH(PyObject *v, PyObject *w) {
-    int res = 0;
-    PyThreadState *tstate = PyThreadState_GET();
-#endif
         if (PyTuple_Check(w)) {
             Py_ssize_t i, length;
             length = PyTuple_Size(w);
@@ -7999,16 +7994,41 @@ PyObject* cmp_outcomePyCmp_EXC_MATCH(PyObject *v, PyObject *w) {
             }
         }
         res = PyErr_GivenExceptionMatches(v, w);
-#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
         break;
     default:
         return PyObject_RichCompare(v, w, op);
     }
-#endif
     v = res ? Py_True : Py_False;
     Py_INCREF(v);
     return v;
 }
+#else
+int cmp_outcomePyCmp_EXC_MATCH(PyObject *v, PyObject *w) {
+    int res = 0;
+    PyThreadState *tstate = PyThreadState_GET();
+    if (PyTuple_Check(w)) {
+        Py_ssize_t i, length;
+        length = PyTuple_Size(w);
+        for (i = 0; i < length; i += 1) {
+            PyObject *exc = PyTuple_GET_ITEM(w, i);
+            if (!PyExceptionClass_Check(exc)) {
+                _PyErr_SetString(tstate, PyExc_TypeError,
+                                    CANNOT_CATCH_MSG);
+                return -1;
+            }
+        }
+    }
+    else {
+        if (!PyExceptionClass_Check(w)) {
+            _PyErr_SetString(tstate, PyExc_TypeError,
+                                CANNOT_CATCH_MSG);
+            return -1;
+        }
+    }
+    res = PyErr_GivenExceptionMatches(v, w);
+    return res;
+}
+#endif
 
 /*static*/ PyObject *
 import_name(PyThreadState *tstate, PyFrameObject *f,

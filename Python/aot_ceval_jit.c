@@ -699,6 +699,9 @@ static char* calculate_jmp_targets(Jit* Dst) {
             case POP_JUMP_IF_TRUE:
             case JUMP_IF_FALSE_OR_POP:
             case JUMP_IF_TRUE_OR_POP:
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
+            case JUMP_IF_NOT_EXC_MATCH:
+#endif
                 is_jmp_target[oparg/2] = 1;
                 break;
 
@@ -4514,7 +4517,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 
         case COMPARE_OP:
         case CONTAINS_OP:
-        case JUMP_IF_NOT_EXC_MATCH:
         case IS_OP: {
             RefStatus ref_status[2];
             deferred_vs_pop2(Dst, arg2_idx, arg1_idx, ref_status);
@@ -4526,9 +4528,6 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             } else if (opcode == CONTAINS_OP) {
                 emit_call_decref_args2(Dst, PySequence_Contains, arg1_idx, arg2_idx, ref_status);
                 emit_convert_res32_to_pybool(Dst, oparg ? 1 : 0 /*=invert*/);
-            } else if (opcode == JUMP_IF_NOT_EXC_MATCH) {
-                emit_call_decref_args2(Dst, cmp_outcomePyCmp_EXC_MATCH, arg1_idx, arg2_idx, ref_status);
-                emit_if_res_0_error(Dst);
             } else if (opcode == IS_OP) {
                 int ret = emit_special_compare_op(Dst, oparg, ref_status);
                 JIT_ASSERT(ret == 0, "");
@@ -4536,6 +4535,17 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
                 JIT_ASSERT(0, "unhandled");
             }
             deferred_vs_push(Dst, REGISTER, res_idx);
+            break;
+        }
+
+        case JUMP_IF_NOT_EXC_MATCH: {
+            RefStatus ref_status[2];
+            deferred_vs_pop2(Dst, arg2_idx, arg1_idx, ref_status);
+            deferred_vs_convert_reg_to_stack(Dst);
+            emit_call_decref_args2(Dst, cmp_outcomePyCmp_EXC_MATCH, arg1_idx, arg2_idx, ref_status);
+            emit_cmp32_imm(Dst, res_idx, 0);
+            emit_je_to_bytecode_n(Dst, oparg);
+            | branch_lt ->error
             break;
         }
 
