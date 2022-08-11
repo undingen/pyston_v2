@@ -1421,6 +1421,7 @@ JIT_HELPER(FOR_ITER_SECOND_PART) {
 
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
 JIT_HELPER1(LIST_EXTEND_ERROR, iterable) {
+    fprintf(stderr, "LIST_EXTEND_ERROR\n");
     if (_PyErr_ExceptionMatches(tstate, PyExc_TypeError) &&
         (Py_TYPE(iterable)->tp_iter == NULL && !PySequence_Check(iterable)))
     {
@@ -1441,6 +1442,7 @@ JIT_HELPER(WITH_EXCEPT_START) {
         Then we push again the TOP exception and the __exit__
         return value.
     */
+    fprintf(stderr, "WITH_EXCEPT_START\n");
     PyObject *exit_func;
     PyObject *exc, *val, *tb, *res;
 

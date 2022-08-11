@@ -8003,30 +8003,32 @@ cmp_outcome(PyThreadState *tstate, int op, PyObject *v, PyObject *w)
     return v;
 }
 #else
-int cmp_outcomePyCmp_EXC_MATCH(PyObject *v, PyObject *w) {
-    int res = 0;
+int cmp_outcomePyCmp_EXC_MATCH(PyObject *left, PyObject *right) {
     PyThreadState *tstate = PyThreadState_GET();
-    if (PyTuple_Check(w)) {
+    if (PyTuple_Check(right)) {
         Py_ssize_t i, length;
-        length = PyTuple_Size(w);
-        for (i = 0; i < length; i += 1) {
-            PyObject *exc = PyTuple_GET_ITEM(w, i);
+        length = PyTuple_GET_SIZE(right);
+        for (i = 0; i < length; i++) {
+            PyObject *exc = PyTuple_GET_ITEM(right, i);
             if (!PyExceptionClass_Check(exc)) {
                 _PyErr_SetString(tstate, PyExc_TypeError,
-                                    CANNOT_CATCH_MSG);
+                                CANNOT_CATCH_MSG);
+                Py_DECREF(left);
+                Py_DECREF(right);
                 return -1;
             }
         }
     }
     else {
-        if (!PyExceptionClass_Check(w)) {
+        if (!PyExceptionClass_Check(right)) {
             _PyErr_SetString(tstate, PyExc_TypeError,
-                                CANNOT_CATCH_MSG);
+                            CANNOT_CATCH_MSG);
+            Py_DECREF(left);
+            Py_DECREF(right);
             return -1;
         }
     }
-    res = PyErr_GivenExceptionMatches(v, w);
-    return res;
+    return PyErr_GivenExceptionMatches(left, right);
 }
 #endif
 
