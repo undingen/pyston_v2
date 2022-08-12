@@ -264,7 +264,7 @@ struct PerfMapEntry {
     long func_size;
 } *perf_map_funcs;
 
-static int jit_use_aot = 1, jit_use_ics = 1;
+static int jit_use_aot = 0, jit_use_ics = 0;
 
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
 static PyObject* cmp_outcomePyCmp_BAD(PyObject *v, PyObject *w) {
@@ -649,6 +649,8 @@ static const char* get_opcode_name(int opcode) {
 
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
         OPCODE_NAME(CONTAINS_OP);
+        OPCODE_NAME(DICT_MERGE);
+        OPCODE_NAME(DICT_UPDATE);
         OPCODE_NAME(IS_OP);
         OPCODE_NAME(JUMP_IF_NOT_EXC_MATCH);
         OPCODE_NAME(LIST_EXTEND);
@@ -2231,7 +2233,7 @@ static void emit_convert_res32_to_pybool(Jit* Dst, int invert) {
     emit_mov_imm2(Dst, arg3_idx, Py_True, arg4_idx, Py_False);
     emit_cmp32_imm(Dst, res_idx, 0); // 32bit comparison!
     | branch_lt ->error // < 0, means error
-    if (invert) {
+    if (!invert) {
         | csel res, arg3, arg4, ne
     } else {
         | csel res, arg3, arg4, eq
@@ -2243,7 +2245,7 @@ static void emit_convert_res32_to_pybool(Jit* Dst, int invert) {
     emit_mov_imm2(Dst, res_idx, Py_True, tmp_idx, Py_False);
     emit_cmp32_imm(Dst, arg1_idx, 0); // 32bit comparison!
     | branch_lt ->error // < 0, means error
-    if (invert) {
+    if (!invert) {
         | cmovne Rq(res_idx), Rq(tmp_idx)
     } else {
         | cmove Rq(res_idx), Rq(tmp_idx)
@@ -2395,13 +2397,17 @@ static int emit_special_compare_op(Jit* Dst, int oparg, RefStatus ref_status[2])
 @ARM    | csel res, res, tmp, ne
 @X86    | cmove res, tmp
     }
-    // don't need to incref Py_True/Py_False because they are immortals
     if (ref_status[0] == OWNED && ref_status[1] == OWNED)
         emit_decref2(Dst, arg2_idx, arg1_idx, 1 /*= preserve res */);
     else if (ref_status[0] == OWNED)
         emit_decref(Dst, arg2_idx, 1 /*= preserve res */);
     else if (ref_status[1] == OWNED)
         emit_decref(Dst, arg1_idx, 1 /*= preserve res */);
+
+    if (!IS_IMMORTAL(Py_True)) {
+        emit_incref(Dst, res_idx);
+    }
+
     deferred_vs_push(Dst, REGISTER, res_idx);
     return 0;
 }
@@ -3462,6 +3468,10 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
     if (mem_bytes_used_max <= mem_bytes_used) // stop emitting code we used up all memory
         return NULL;
 
+    if (0 && strcmp("_find_spec", PyUnicode_AsUTF8(co->co_name)) != 0) {
+        return 0;
+    }
+
     int success = 0;
 
     struct timespec compilation_start;
@@ -4091,7 +4101,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             func = get_aot_func_addr(Dst, opcode, oparg, 0 /*= no op cache */);
             emit_call_decref_args1(Dst, func, arg1_idx, &ref_status);
             if (opcode == UNARY_NOT) {
-                emit_convert_res32_to_pybool(Dst, 0/*=don't invert*/);
+                emit_convert_res32_to_pybool(Dst, 0 /*= don't invert*/);
             } else {
                 emit_if_res_0_error(Dst);
             }
@@ -4519,22 +4529,28 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
         case CONTAINS_OP:
         case IS_OP: {
             RefStatus ref_status[2];
-            deferred_vs_pop2(Dst, arg2_idx, arg1_idx, ref_status);
+            if (opcode == CONTAINS_OP) {
+                deferred_vs_pop2(Dst, arg1_idx, arg2_idx, ref_status);
+            } else {
+                deferred_vs_pop2(Dst, arg2_idx, arg1_idx, ref_status);
+            }
             deferred_vs_convert_reg_to_stack(Dst);
             if (opcode == COMPARE_OP) {
                 emit_mov_imm(Dst, arg3_idx, oparg);
-                emit_call_decref_args2(Dst, PyObject_RichCompare, arg1_idx, arg2_idx, ref_status);
+                emit_call_decref_args2(Dst, PyObject_RichCompare, arg2_idx, arg1_idx, ref_status);
                 emit_if_res_0_error(Dst);
+                deferred_vs_push(Dst, REGISTER, res_idx);
             } else if (opcode == CONTAINS_OP) {
                 emit_call_decref_args2(Dst, PySequence_Contains, arg1_idx, arg2_idx, ref_status);
-                emit_convert_res32_to_pybool(Dst, oparg ? 1 : 0 /*=invert*/);
+                emit_convert_res32_to_pybool(Dst, oparg ? 0 : 1 /*=invert*/);
+                deferred_vs_push(Dst, REGISTER, res_idx);
             } else if (opcode == IS_OP) {
                 int ret = emit_special_compare_op(Dst, oparg, ref_status);
                 JIT_ASSERT(ret == 0, "");
+                // don't call deferred_vs_push here because emit_special_compare_op already called it
             } else {
                 JIT_ASSERT(0, "unhandled");
             }
-            deferred_vs_push(Dst, REGISTER, res_idx);
             break;
         }
 
@@ -4549,27 +4565,68 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             break;
         }
 
+        case DICT_MERGE:
+        case DICT_UPDATE:
         case LIST_EXTEND: {
             RefStatus ref_status = deferred_vs_pop1(Dst, arg2_idx);
             deferred_vs_peek(Dst, arg1_idx, oparg);
             deferred_vs_convert_reg_to_stack(Dst);
 
+            // we have to make a copy because we use it in the error path
+            // and the call would clobber it
             | mov tmp_preserved_reg, arg2
-            emit_call_ext_func(Dst, _PyList_Extend);
-            emit_cmp32_imm(Dst, res_idx, 0);
-            | branch_ne >1
+            void* func = NULL;
+            void* func_error = NULL; // what helper func do we have to call on error
+            // 0: if functions returns a 32bit in which < 0 signals an error
+            // 1: if function returns a PyObject which we have to decref and 0 signals an error
+            int returns_pyobject = 0;
+            if (opcode == DICT_MERGE) {
+                func = _PyDict_MergeEx;
+                func_error = JIT_HELPER_DICT_MERGE_ERROR;
+                emit_mov_imm(Dst, arg3_idx, 2);
+            } else if (opcode == DICT_UPDATE) {
+                func = PyDict_Update;
+                func_error = JIT_HELPER_DICT_UPDATE_ERROR;
+            } else if (opcode == LIST_EXTEND) {
+                func = _PyList_Extend;
+                func_error = JIT_HELPER_LIST_EXTEND_ERROR;
+                returns_pyobject = 1;
+            } else {
+                JIT_ASSERT(0, "");
+            }
+            emit_call_ext_func(Dst, func);
 
-            // error path:
-            | mov arg1, tmp_preserved_reg
-            emit_make_owned(Dst, arg1_idx, ref_status);
-            emit_call_ext_func(Dst, JIT_HELPER_LIST_EXTEND_ERROR);
-            | branch ->error
-
-            |1:
+            if (returns_pyobject) {
+                // error: (PyObject*)res == NULL
+                emit_cmp64_imm(Dst, res_idx, 0);
+                | branch_eq >1
+            } else {
+                // error: (int)res < 0
+                emit_cmp32_imm(Dst, res_idx, 0);
+                | branch_lt >1
+            }
             if (ref_status == OWNED) {
                 emit_decref(Dst, tmp_preserved_reg_idx, 1 /*= preserve res */);
             }
-            emit_decref(Dst, res_idx, 0 /*= don't preserve res */);
+            if (returns_pyobject) {
+                emit_decref(Dst, res_idx, 0 /*= don't preserve res */);
+            }
+
+            // error path:
+            {
+                switch_section(Dst, SECTION_COLD);
+                |1:
+                // arg1 is unused in the error path
+                | mov arg2, tmp_preserved_reg
+                emit_make_owned(Dst, arg2_idx, ref_status);
+                if (opcode == DICT_MERGE) {
+                    // dict merge is special - it takes a second arg
+                    deferred_vs_peek(Dst, arg3_idx, 2 + oparg);
+                }
+                emit_call_ext_func(Dst, func_error);
+                | branch ->error
+                switch_section(Dst, SECTION_CODE);
+            }
             break;
         }
 

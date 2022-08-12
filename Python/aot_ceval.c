@@ -4702,7 +4702,9 @@ sa_common:
             PUSH(sum);
             DISPATCH();
         }
-#else
+#endif
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
         case TARGET(DICT_UPDATE): {
             PyObject *update = POP();
             PyObject *dict = PEEK(oparg);
@@ -6119,6 +6121,7 @@ exiting:
 static PyObject* _Py_HOT_FUNCTION
 _PyEval_EvalFrame_AOT_JIT(PyFrameObject *f, PyThreadState * const tstate, PyObject** stack_pointer, JitFunc jit_code)
 {
+    static long times;
     PyObject* retval = NULL;
 
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7
@@ -6127,13 +6130,16 @@ _PyEval_EvalFrame_AOT_JIT(PyFrameObject *f, PyThreadState * const tstate, PyObje
 
 continue_jit:
     {
+        long mytimes = ++times;
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7
         JitRetVal ret = jit_code(f, tstate, stack_pointer, &why);
 #else
+        //fprintf(stderr, "%ld run %s:%d %s\n", mytimes, PyUnicode_AsUTF8(f->f_code->co_filename), f->f_code->co_firstlineno, PyUnicode_AsUTF8(f->f_code->co_name));
         JitRetVal ret = jit_code(f, tstate, stack_pointer);
 #endif
         stack_pointer = ret.stack_pointer;
         int lower_bits = ret.ret_val & 3;
+        //fprintf(stderr, "   %ld %d %d\n", mytimes, f->f_lasti, lower_bits);
         if (lower_bits == 0) {
             retval = (PyObject*)ret.ret_val;
             if (retval) {
