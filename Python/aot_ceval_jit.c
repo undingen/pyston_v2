@@ -2252,9 +2252,7 @@ static void emit_convert_res32_to_pybool(Jit* Dst, int invert) {
     }
 @X86_END
 
-    if (!IS_IMMORTAL(Py_True)) {
-        emit_incref(Dst, res_idx);
-    }
+    // don't need to incref Py_True/Py_False because they are immortals
 }
 
 
@@ -2404,9 +2402,7 @@ static int emit_special_compare_op(Jit* Dst, int oparg, RefStatus ref_status[2])
     else if (ref_status[1] == OWNED)
         emit_decref(Dst, arg1_idx, 1 /*= preserve res */);
 
-    if (!IS_IMMORTAL(Py_True)) {
-        emit_incref(Dst, res_idx);
-    }
+    // don't need to incref Py_True/Py_False because they are immortals
 
     deferred_vs_push(Dst, REGISTER, res_idx);
     return 0;
