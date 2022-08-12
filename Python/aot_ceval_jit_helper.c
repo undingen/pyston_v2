@@ -1421,7 +1421,6 @@ JIT_HELPER(FOR_ITER_SECOND_PART) {
 
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 9
 JIT_HELPER1(DICT_UPDATE_ERROR, update) {
-    fprintf(stderr, "DICT_UPDATE_ERROR\n");
     if (_PyErr_ExceptionMatches(tstate, PyExc_AttributeError)) {
         _PyErr_Format(tstate, PyExc_TypeError,
                         "'%.200s' object is not a mapping",
@@ -1431,13 +1430,11 @@ JIT_HELPER1(DICT_UPDATE_ERROR, update) {
     goto_error;
 }
 JIT_HELPER2(DICT_MERGE_ERROR, update, func) {
-    fprintf(stderr, "DICT_MERGE_ERROR\n");
     format_kwargs_error(tstate, func, update);
     Py_DECREF(update);
     goto_error;
 }
 JIT_HELPER1(LIST_EXTEND_ERROR, iterable) {
-    fprintf(stderr, "LIST_EXTEND_ERROR\n");
     if (_PyErr_ExceptionMatches(tstate, PyExc_TypeError) &&
         (Py_TYPE(iterable)->tp_iter == NULL && !PySequence_Check(iterable)))
     {
@@ -1458,7 +1455,6 @@ JIT_HELPER(WITH_EXCEPT_START) {
         Then we push again the TOP exception and the __exit__
         return value.
     */
-    //fprintf(stderr, "WITH_EXCEPT_START\n");
     PyObject *exit_func;
     PyObject *exc, *val, *tb, *res;
 
@@ -1471,11 +1467,8 @@ JIT_HELPER(WITH_EXCEPT_START) {
     PyObject *stack[4] = {NULL, exc, val, tb};
     res = PyObject_Vectorcall(exit_func, stack + 1,
             3 | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
-    //fprintf(stderr, "res: %p\n", res);
     if (res == NULL)
         goto_error;
-    //fprintf(stderr, "res: %p %s\n", res, res->ob_type->tp_name);
-
     return res;
 }
 #endif
@@ -1497,7 +1490,6 @@ JIT_HELPER(BEFORE_ASYNC_WITH) {
     if (enter == NULL)
         goto_error;
 #else
-    fprintf(stderr, "BEFORE_ASYNC_WITH\n");
     _Py_IDENTIFIER(__aenter__);
     _Py_IDENTIFIER(__aexit__);
     PyObject *mgr = TOP();
