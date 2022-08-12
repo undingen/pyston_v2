@@ -264,7 +264,7 @@ struct PerfMapEntry {
     long func_size;
 } *perf_map_funcs;
 
-static int jit_use_aot = 0, jit_use_ics = 0;
+static int jit_use_aot = 1, jit_use_ics = 1;
 
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 8
 static PyObject* cmp_outcomePyCmp_BAD(PyObject *v, PyObject *w) {
