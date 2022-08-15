@@ -34,4 +34,4 @@ if [ -z ${NOBOLT+x} ]; then
     make -C ../.. -j$(nproc) bolt
 fi
 
-PYTHON=python${PYTHON_VERSION} make test -j$(nproc)
+PYTHON=python${PYTHON_VERSION} DISABLE_PYSTON=1 make test -j$(nproc)
