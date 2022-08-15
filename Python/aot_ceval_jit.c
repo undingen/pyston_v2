@@ -71,7 +71,7 @@
 #endif
 
 // enable runtime checks to catch jit compiler bugs
-#define JIT_DEBUG 1
+//#define JIT_DEBUG 1
 
 #if JIT_DEBUG
 #define DASM_CHECKS 1
@@ -3509,7 +3509,9 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
 #endif
 
     // did we emit the * label already?
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 8
     int end_finally_label = 0;
+#endif
     int exit_yielding_label = 0;
     int deref_error_label = 0;
 
@@ -4543,6 +4545,7 @@ void* jit_func(PyCodeObject* co, PyThreadState* tstate) {
             } else if (opcode == IS_OP) {
                 int ret = emit_special_compare_op(Dst, oparg, ref_status);
                 JIT_ASSERT(ret == 0, "");
+                (void)(ret); // suppress unused variable warning
                 // don't call deferred_vs_push here because emit_special_compare_op already called it
             } else {
                 JIT_ASSERT(0, "unhandled");
