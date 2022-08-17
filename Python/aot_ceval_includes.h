@@ -26,7 +26,11 @@ extern "C" {
 #include "pycore_pyerrors.h"
 #include "pycore_pylifecycle.h"
 #include "pycore_pystate.h"
+#if PY_MAJOR_VERSION == 3 &&  PY_MINOR_VERSION <= 9
 #include "pycore_tupleobject.h"
+#else
+#include "pycore_tuple.h"
+#endif
 #endif
 
 #include "code.h"
@@ -39,6 +43,14 @@ extern "C" {
 #include "pydtrace.h"
 #include "setobject.h"
 #include "structmember.h"
+
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 10
+typedef struct {
+    PyCodeObject *code; // The code object for the bounds. May be NULL.
+    PyCodeAddressRange bounds; // Only valid if code != NULL.
+    CFrame cframe;
+} PyTraceInfo;
+#endif
 
 #ifdef __cplusplus
 }

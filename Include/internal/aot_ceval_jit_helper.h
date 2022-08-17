@@ -118,6 +118,8 @@ __attribute__((flatten)) JIT_HELPER_WITH_OPARG3(CALL_FUNCTION_EX_KWARGS, kwargs,
 JIT_HELPER_WITH_OPARG2(MAKE_FUNCTION, qualname, codeobj);
 JIT_HELPER_WITH_OPARG(FORMAT_VALUE);
 
+PyObject* JIT_HELPER_EVAL_BREAKER_WITHOUT_RES(void);
+PyObject* JIT_HELPER_EVAL_BREAKER_WITH_RES(PyObject* res);
 
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7
 enum why_code;
@@ -133,6 +135,26 @@ JIT_HELPER(WITH_EXCEPT_START);
 int JIT_HELPER_EXC_MATCH(PyObject *left, PyObject *right);
 #endif
 
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 10
+JIT_HELPER_WITH_OPARG3(RERAISE_OPARG_SET, exc, val, tb);
+
+JIT_HELPER1(GET_LEN, top);
+JIT_HELPER_WITH_OPARG(MATCH_CLASS);
+JIT_HELPER1(MATCH_MAPPING, subject);
+JIT_HELPER1(MATCH_SEQUENCE, subject);
+JIT_HELPER(MATCH_KEYS);
+JIT_HELPER(COPY_DICT_WITHOUT_KEYS);
+JIT_HELPER_WITH_OPARG(ROT_N);
+#endif
+
+#endif
+
+// In Python <= 3.9 f_lasti and all bytecode jump offsets are always incremented by 2 for every instruction. (Because a instruction is 2 bytes long).
+// In newer versions it's instead the index of the instruction.
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 9
+#define FACTOR 2
+#else
+#define FACTOR 1
 #endif
 
 #ifdef __cplusplus
