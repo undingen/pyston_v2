@@ -154,16 +154,16 @@ typedef struct {
     PyObject *md_name;  /* for logging purposes after md_dict is cleared */
 } PyModuleObject;
 
-
-#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 10
-#define _PyDict_GetItemId _PyDict_GetItemIdWithError
-#endif
-
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 9
 static PyObject*
 module_getgetattr(PyModuleObject* mod) {
     _Py_IDENTIFIER(__getattr__);
     return _PyDict_GetItemId(mod->md_dict, &PyId___getattr__);
 }
+#else
+_Py_IDENTIFIER(__name__);
+_Py_IDENTIFIER(__spec__);
+#endif
 
 PyObject* module_getattro_not_found(PyObject *_m, PyObject *name)
 {
@@ -177,12 +177,14 @@ PyObject* module_getattro_not_found(PyObject *_m, PyObject *name)
     }
 
     if (m->md_dict) {
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION <= 9
         getattr = module_getgetattr(m);
         if (getattr) {
             PyObject* stack[1] = {name};
             return _PyObject_FastCall(getattr, stack, 1);
         }
         _Py_IDENTIFIER(__name__);
+
         mod_name = _PyDict_GetItemId(m->md_dict, &PyId___name__);
         if (mod_name && PyUnicode_Check(mod_name)) {
 #if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION == 7
@@ -210,6 +212,44 @@ PyObject* module_getattro_not_found(PyObject *_m, PyObject *name)
 #endif
             return NULL;
         }
+#else
+        _Py_IDENTIFIER(__getattr__);
+        getattr = _PyDict_GetItemIdWithError(m->md_dict, &PyId___getattr__);
+        if (getattr) {
+            return PyObject_CallOneArg(getattr, name);
+        }
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
+        mod_name = _PyDict_GetItemIdWithError(m->md_dict, &PyId___name__);
+        if (mod_name && PyUnicode_Check(mod_name)) {
+            Py_INCREF(mod_name);
+            PyObject *spec = _PyDict_GetItemIdWithError(m->md_dict, &PyId___spec__);
+            if (spec == NULL && PyErr_Occurred()) {
+                Py_DECREF(mod_name);
+                return NULL;
+            }
+            Py_XINCREF(spec);
+            if (_PyModuleSpec_IsInitializing(spec)) {
+                PyErr_Format(PyExc_AttributeError,
+                             "partially initialized "
+                             "module '%U' has no attribute '%U' "
+                             "(most likely due to a circular import)",
+                             mod_name, name);
+            }
+            else {
+                PyErr_Format(PyExc_AttributeError,
+                             "module '%U' has no attribute '%U'",
+                             mod_name, name);
+            }
+            Py_XDECREF(spec);
+            Py_DECREF(mod_name);
+            return NULL;
+        }
+        else if (PyErr_Occurred()) {
+            return NULL;
+        }
+#endif
     }
     PyErr_Format(PyExc_AttributeError,
                 "module has no attribute '%U'", name);
