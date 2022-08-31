@@ -929,8 +929,15 @@ do { \
     ts.tv_nsec = tv.tv_usec * 1000; \
 } while(0)
 
+#if defined(HAVE_PTHREAD_CONDATTR_SETCLOCK) && defined(HAVE_CLOCK_GETTIME) && defined(CLOCK_MONOTONIC)
+// monotonic is supported statically.  It doesn't mean it works on runtime.
+#define CONDATTR_MONOTONIC
+#endif
+
+#ifdef CONDATTR_MONOTONIC
 // NULL when pthread_condattr_setclock(CLOCK_MONOTONIC) is not supported.
 static pthread_condattr_t *condattr_monotonic = NULL;
+#endif
 
 // Pyston change:
 //static void init_condattr(void)
@@ -955,6 +962,8 @@ monotonic_abs_timeout(long long us, struct timespec *abs)
     abs->tv_sec  += abs->tv_nsec / 1000000000;
     abs->tv_nsec %= 1000000000;
 }
+#else
+#error "this should be defined"
 #endif
 void _PyThread_cond_after(long long us, struct timespec *abs) {
 #ifdef CONDATTR_MONOTONIC
