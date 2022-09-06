@@ -176,6 +176,11 @@ jobs:
 
           python3 --version
 
+          # this 3.7 test does not work on new macos
+          if [[ ${{ matrix.python-version }} == "3.7" ]]; then
+            export ADDITIONAL_TESTS_TO_SKIP="${ADDITIONAL_TESTS_TO_SKIP} test_platform";
+          fi
+
           # pyston must be compiled by gcc not clang
           CC=gcc-11 PYTHON=python3 make test
           SHOW_JIT_STATS=1 ./env/bin/python ../test/inplace_math.py
