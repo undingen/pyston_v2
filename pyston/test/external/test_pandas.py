@@ -5,8 +5,8 @@ import sys
 import sysconfig
 import tempfile
 
-
-if __name__ == "__main__":
+# test requires Python >= 3.8
+if __name__ == "__main__" and sys.version_info[:2] >= (3, 8):
     with tempfile.TemporaryDirectory() as tempdir:
         # Pandas has some tests that look flaky and are marked xfail
         print("PYSTONTEST: no-log-check")

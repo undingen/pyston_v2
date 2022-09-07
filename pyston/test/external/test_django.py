@@ -10,7 +10,8 @@ django_requirements.txt:
 - I froze the dependencies with pip freeze
 """
 
-if __name__ == "__main__":
+# test requires Python >= 3.8
+if __name__ == "__main__" and sys.version_info[:2] >= (3, 8):
     with tempfile.TemporaryDirectory() as tempdir:
         print("PYSTONTEST: on-failure-print If you see a WebP failure, you might have to install libwebp-dev, delete the cached pillow wheel, and try again")
 
