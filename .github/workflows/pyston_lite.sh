@@ -13,13 +13,15 @@ sudo apt-get update
 
 sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y build-essential luajit software-properties-common
 
-if [ $PYTHON_VERSION != "3.8" ] # it's the system python of 20.04 (deadsnakes does not provide it)
+if [ $PYTHON_VERSION == "3.8" ] # it's the system python of 20.04 (deadsnakes does not provide it)
 then
+    sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y python3.8-full python3.8-dev libpython3.8-testsuite python3-pip
+else
     sudo add-apt-repository -y ppa:deadsnakes/ppa
     sudo apt-get update
-
-    #sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y python${PYTHON_VERSION}-full
-
+    # deadsnakes packages have slightly different name
+    sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y python${PYTHON_VERSION}-full python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv libpython${PYTHON_VERSION}-testsuite python3-lib2to3 python3-distutils
+    sudo python${PYTHON_VERSION} -m ensurepip
 
     if [ $PYTHON_VERSION == "3.9" ]
     then
@@ -34,19 +36,7 @@ then
     fi
 fi
 
-sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y python${PYTHON_VERSION}-full python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv libpython${PYTHON_VERSION}-testsuite python3-lib2to3 python3-distutils python3-pip
-
 sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y virtualenv libssl-dev libsqlite3-dev zlib1g-dev libwebp-dev libjpeg-dev python${PYTHON_VERSION}-gdbm python${PYTHON_VERSION}-tk tk-dev libgdbm-dev libgdbm-compat-dev liblzma-dev libbz2-dev nginx rustc time
-
-#if [ $PYTHON_VERSION != "3.8" ]
-#then
-#    sudo python${PYTHON_VERSION} -m ensurepip
-#fi
-
-# update pip to latest version.
-# Run into problems on 3.10 with older pip:
-# ImportError: cannot import name 'html5lib' from 'pip._vendor'
-sudo python${PYTHON_VERSION} -m pip install --upgrade pip
 
 sudo chown -R `whoami` /pyston_dir
 
