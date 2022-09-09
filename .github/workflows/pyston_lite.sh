@@ -21,7 +21,7 @@ else
     sudo apt-get update
     # deadsnakes packages have slightly different name
     sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y python${PYTHON_VERSION}-full python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv libpython${PYTHON_VERSION}-testsuite python3-lib2to3 python3-distutils
-    sudo python${PYTHON_VERSION} -m ensurepip
+    sudo python${PYTHON_VERSION} -m ensurepip --upgrade
 
     if [ $PYTHON_VERSION == "3.9" ]
     then
