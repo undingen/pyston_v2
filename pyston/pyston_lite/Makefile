@@ -75,7 +75,7 @@ test: env/lite.stamp
 VIRTUALENV:=../../build/bootstrap_env/bin/virtualenv
 $(VIRTUALENV):
 	virtualenv -p $(PYTHON) ../../build/bootstrap_env
-	../../build/bootstrap_env/bin/python3 -m pip install --upgrade pip
+	#../../build/bootstrap_env/bin/python3 -m pip install --upgrade pip
 	../../build/bootstrap_env/bin/pip install virtualenv
 
 # args: test_suffix test_binary
