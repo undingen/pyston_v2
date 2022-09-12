@@ -38,7 +38,7 @@ fi
 
 sudo python${PYTHON_VERSION} -m pip install virtualenv
 
-sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y libssl-dev libsqlite3-dev zlib1g-dev libwebp-dev libjpeg-dev python${PYTHON_VERSION}-gdbm python${PYTHON_VERSION}-tk tk-dev libgdbm-dev libgdbm-compat-dev liblzma-dev libbz2-dev nginx rustc time
+sudo --preserve-env=DEBIAN_FRONTEND apt-get install -y libssl-dev libsqlite3-dev zlib1g-dev libwebp-dev libjpeg-dev python${PYTHON_VERSION}-gdbm python${PYTHON_VERSION}-tk tk-dev libgdbm-dev libgdbm-compat-dev liblzma-dev libbz2-dev nginx rustc time libffi-dev
 
 sudo chown -R `whoami` /pyston_dir
 
