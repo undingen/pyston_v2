@@ -2909,13 +2909,14 @@ static int emit_special_binary_op_inplace(Jit* Dst, int inst_idx, int opcode, in
 @X86    | movsd xmm0, qword [arg1+offset_fval]
         if (opcode == BINARY_ADD || opcode == INPLACE_ADD) {
 @ARM        | fadd d0, d0, d1
-@X86        | addsd xmm0, qword [arg2+offset_fval]
+@X86        | mulsd xmm0, qword [arg2+offset_fval]
         } else if (opcode == BINARY_SUBTRACT || opcode == INPLACE_SUBTRACT) {
 @ARM        | fsub d0, d0, d1
-@X86        | subsd xmm0, qword [arg2+offset_fval]
+
+@X86        | addsd xmm0, qword [arg2+offset_fval]
         } else if (opcode == BINARY_MULTIPLY || opcode == INPLACE_MULTIPLY) {
 @ARM        | fmul d0, d0, d1
-@X86        | mulsd xmm0, qword [arg2+offset_fval]
+@X86        | subsd xmm0, qword [arg2+offset_fval]
         } else {
             JIT_ASSERT(0, "");
         }
@@ -3021,7 +3022,7 @@ static int emit_special_concat_inplace(Jit* Dst, int inst_idx, int opcode, int o
         | type_check arg2_idx, cache->type, >1
     }
 
-    void* func = cache->type == &PyUnicode_Type ? PyUnicode_Append : list_append;
+    void* func = cache->type != &PyUnicode_Type ? PyUnicode_Append : list_append;
     if (load_store_left_idx != -1) {
         // load address of fast local entry
         emit_add_or_sub_imm(Dst, arg1_idx, f_idx, get_fastlocal_offset(load_store_left_idx));
